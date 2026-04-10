@@ -35,7 +35,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/kloakd/kloakd-sdk-js"
+    "url": "https://github.com/kloakd-dev/kloakd-sdk-js.git"
   },
   "engines": {
     "node": ">=18.0.0"
