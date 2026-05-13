@@ -95,4 +95,31 @@ export class NexusNamespace {
     };
     return { ...result, get ok() { return result.error === null; } };
   }
+
+  async reason(context: Record<string, unknown>): Promise<Record<string, unknown>> {
+    return this._t.post('nexus/reason', context);
+  }
+
+  async recommendAnalyze(data: Record<string, unknown>): Promise<Record<string, unknown>> {
+    return this._t.post('nexus/recommendations/analyze', data);
+  }
+
+  async listRecommendationApplications(): Promise<Record<string, unknown>> {
+    return this._t.get('nexus/recommendations/applications');
+  }
+
+  async getCacheStatistics(): Promise<Record<string, unknown>> { return this._t.get('nexus/recommendations/cache/statistics'); }
+  async cleanupCache(): Promise<Record<string, unknown>> { return this._t.post('nexus/recommendations/cache/cleanup', {}); }
+  async invalidateCache(): Promise<Record<string, unknown>> { return this._t.post('nexus/recommendations/cache/invalidate', {}); }
+
+  async getHooksStatus(): Promise<Record<string, unknown>> { return this._t.get('nexus/recommendations/hooks/status'); }
+  async enableHook(hookName: string): Promise<Record<string, unknown>> { return this._t.post(`nexus/recommendations/hooks/${hookName}/enable`, {}); }
+  async disableHook(hookName: string): Promise<Record<string, unknown>> { return this._t.post(`nexus/recommendations/hooks/${hookName}/disable`, {}); }
+
+  async createPreference(preference: Record<string, unknown>): Promise<Record<string, unknown>> { return this._t.post('nexus/recommendations/preferences', preference); }
+  async getPreferences(userId: string): Promise<Record<string, unknown>> { return this._t.get(`nexus/recommendations/preferences/${userId}`); }
+  async updatePreference(preferenceId: string, data: Record<string, unknown>): Promise<Record<string, unknown>> { return this._t.put(`nexus/recommendations/preferences/${preferenceId}`, data); }
+  async deletePreference(preferenceId: string): Promise<void> { await this._t.delete(`nexus/recommendations/preferences/${preferenceId}`); }
+
+  async getRecommendationStatistics(): Promise<Record<string, unknown>> { return this._t.get('nexus/recommendations/statistics'); }
 }

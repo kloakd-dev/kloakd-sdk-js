@@ -78,7 +78,35 @@ export class EvadrNamespace {
     };
   }
 
+  async scan(url: string, opts: { statusCode?: number; headers?: Record<string, string>; bodySnippet?: string } = {}): Promise<Record<string, unknown>> {
+    return this._t.post('evadr/scan', { url, status_code: opts.statusCode ?? 200, headers: opts.headers ?? {}, body_snippet: opts.bodySnippet ?? null });
+  }
+
+  async getJob(jobId: string): Promise<Record<string, unknown>> {
+    return this._t.get(`evadr/jobs/${jobId}`);
+  }
+
+  async getJobEvents(jobId: string): Promise<Record<string, unknown>> {
+    return this._t.get(`evadr/jobs/${jobId}/events`);
+  }
+
+  async listVendors(): Promise<Record<string, unknown>> {
+    return this._t.get('evadr/vendors');
+  }
+
+  async listProfiles(): Promise<Record<string, unknown>> {
+    return this._t.get('evadr/profiles');
+  }
+
+  async listProxies(): Promise<Record<string, unknown>> {
+    return this._t.get('evadr/proxies');
+  }
+
   async storeProxy(name: string, proxyUrl: string): Promise<void> {
     await this._t.post('evadr/proxies', { name, proxy_url: proxyUrl });
+  }
+
+  async deleteProxy(name: string): Promise<void> {
+    await this._t.delete(`evadr/proxies/${name}`);
   }
 }

@@ -68,4 +68,43 @@ export class KolektrNamespace {
     const raw = await this._t.post('kolektr/extract/html', body);
     return parseExtraction(raw, url);
   }
+
+  async getApiData(apiEndpoint: string): Promise<Record<string, unknown>> {
+    return this._t.get(`kolektr/api-data/${apiEndpoint}`);
+  }
+
+  async getApiDataPaginated(apiEndpoint: string, offset = 0, limit = 1000): Promise<Record<string, unknown>> {
+    return this._t.get(`kolektr/api-data/${apiEndpoint}/paginated`, { offset: String(offset), limit: String(limit) });
+  }
+
+  async extractAllApiData(apiEndpoint: string): Promise<Record<string, unknown>> {
+    return this._t.post(`kolektr/api-data/${apiEndpoint}/extract-all`, {});
+  }
+
+  async listContent(): Promise<Record<string, unknown>> { return this._t.get('kolektr/content'); }
+  async getContent(itemId: string): Promise<Record<string, unknown>> { return this._t.get(`kolektr/content/${itemId}`); }
+  async deleteContent(itemId: string): Promise<void> { await this._t.delete(`kolektr/content/${itemId}`); }
+
+  async listJobs(): Promise<Record<string, unknown>> { return this._t.get('kolektr/jobs'); }
+  async createJob(config: Record<string, unknown>): Promise<Record<string, unknown>> { return this._t.post('kolektr/jobs', config); }
+  async getJob(jobId: string): Promise<Record<string, unknown>> { return this._t.get(`kolektr/jobs/${jobId}`); }
+  async getJobStatus(jobId: string): Promise<Record<string, unknown>> { return this._t.get(`kolektr/extraction-jobs/${jobId}/status`); }
+  async getJobProgress(jobId: string): Promise<Record<string, unknown>> { return this._t.get(`kolektr/jobs/${jobId}/progress`); }
+  async getJobProgressEvents(jobId: string): Promise<Record<string, unknown>> { return this._t.get(`kolektr/jobs/${jobId}/progress/events`); }
+  async getJobProgressLatest(jobId: string): Promise<Record<string, unknown>> { return this._t.get(`kolektr/jobs/${jobId}/progress/latest`); }
+  async getJobProgressSummary(jobId: string): Promise<Record<string, unknown>> { return this._t.get(`kolektr/jobs/${jobId}/progress/summary`); }
+
+  async getPipelineEvents(pipelineId: string): Promise<Record<string, unknown>> { return this._t.get(`kolektr/pipeline/${pipelineId}/events`); }
+  async getPipelineStream(pipelineId: string): Promise<Record<string, unknown>> { return this._t.get(`kolektr/pipeline/${pipelineId}/stream`); }
+
+  async listProgressPhases(): Promise<Record<string, unknown>> { return this._t.get('kolektr/progress/phases'); }
+  async getProgressPhase(phaseName: string): Promise<Record<string, unknown>> { return this._t.get(`kolektr/progress/phases/${phaseName}`); }
+  async getProgressPhaseSteps(phaseName: string): Promise<Record<string, unknown>> { return this._t.get(`kolektr/progress/phases/${phaseName}/steps`); }
+  async getProgressSummary(): Promise<Record<string, unknown>> { return this._t.get('kolektr/progress/summary'); }
+
+  async listScrapers(): Promise<Record<string, unknown>> { return this._t.get('kolektr/scrapers'); }
+  async createScraper(config: Record<string, unknown>): Promise<Record<string, unknown>> { return this._t.post('kolektr/scrapers', config); }
+  async getScraper(scraperId: string): Promise<Record<string, unknown>> { return this._t.get(`kolektr/scrapers/${scraperId}`); }
+  async updateScraper(scraperId: string, updates: Record<string, unknown>): Promise<Record<string, unknown>> { return this._t.patch(`kolektr/scrapers/${scraperId}`, updates); }
+  async deleteScraper(scraperId: string): Promise<void> { await this._t.delete(`kolektr/scrapers/${scraperId}`); }
 }

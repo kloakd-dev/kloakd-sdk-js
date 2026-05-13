@@ -86,6 +86,10 @@ export class WebgrphNamespace {
     }
   }
 
+  async getCrawlStatus(crawlId: string): Promise<Record<string, unknown>> { return this._t.get(`webgrph/crawl/${crawlId}`); }
+  async getCrawlEvents(crawlId: string): Promise<Record<string, unknown>> { return this._t.get(`webgrph/crawl/${crawlId}/events`); }
+  async getCrawlPages(crawlId: string): Promise<Record<string, unknown>> { return this._t.get(`webgrph/crawl/${crawlId}/pages`); }
+
   async getHierarchy(artifactId: string): Promise<Record<string, unknown>> {
     return this._t.get(`webgrph/hierarchy/${artifactId}`);
   }
@@ -93,4 +97,12 @@ export class WebgrphNamespace {
   async getJob(jobId: string): Promise<Record<string, unknown>> {
     return this._t.get(`webgrph/jobs/${jobId}`);
   }
+
+  async getDashboardSummary(): Promise<Record<string, unknown>> { return this._t.get('webgrph/analytics/dashboard/summary'); }
+  async getErrorSummary(): Promise<Record<string, unknown>> { return this._t.get('webgrph/analytics/error-summary'); }
+  async getJobTrends(): Promise<Record<string, unknown>> { return this._t.get('webgrph/analytics/job-trends'); }
+  async getDiscoveryPatterns(): Promise<Record<string, unknown>> { return this._t.get('webgrph/analytics/content/discovery-patterns'); }
+  async getEfficiencyMetrics(): Promise<Record<string, unknown>> { return this._t.get('webgrph/analytics/scraping/efficiency-metrics'); }
+  async getSiteMappingTrends(): Promise<Record<string, unknown>> { return this._t.get('webgrph/analytics/site-maps/trends'); }
+  async getUserBehaviorInsights(): Promise<Record<string, unknown>> { return this._t.get('webgrph/analytics/users/behavior-insights'); }
 }

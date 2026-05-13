@@ -12,7 +12,7 @@
 
 import { KloakdError, raiseForStatus } from './errors.js';
 
-const SDK_VERSION = '0.1.0';
+const SDK_VERSION = '0.2.0';
 const RETRYABLE = new Set([429, 500, 502, 503, 504]);
 
 function sdkHeader(): string {
@@ -128,6 +128,14 @@ export class HttpTransport {
 
   async post<T = Record<string, unknown>>(path: string, body: Record<string, unknown>): Promise<T> {
     return this.request<T>('POST', path, body);
+  }
+
+  async put<T = Record<string, unknown>>(path: string, body: Record<string, unknown>): Promise<T> {
+    return this.request<T>('PUT', path, body);
+  }
+
+  async patch<T = Record<string, unknown>>(path: string, body: Record<string, unknown>): Promise<T> {
+    return this.request<T>('PATCH', path, body);
   }
 
   async delete(path: string): Promise<void> {

@@ -142,13 +142,77 @@ export class FetchyrNamespace {
     };
   }
 
+  async storeCredentials(name: string, credentials: Record<string, string>): Promise<Record<string, unknown>> {
+    return this._t.post('fetchyr/account/credentials', { name, ...credentials });
+  }
+
+  async listCredentials(): Promise<Record<string, unknown>> {
+    return this._t.get('fetchyr/account/credentials');
+  }
+
+  async deleteCredentials(name: string): Promise<void> {
+    await this._t.delete(`fetchyr/account/credentials/${name}`);
+  }
+
+  async listSessions(): Promise<Record<string, unknown>> {
+    return this._t.get('fetchyr/sessions');
+  }
+
+  async terminateSession(artifactId: string): Promise<void> {
+    await this._t.delete(`fetchyr/sessions/${artifactId}`);
+  }
+
+  async fillForm(url: string, formData: Record<string, string>, opts: { sessionArtifactId?: string; submit?: boolean } = {}): Promise<Record<string, unknown>> {
+    const body: Record<string, unknown> = { url, form_data: formData, submit: opts.submit ?? true };
+    if (opts.sessionArtifactId) body['session_artifact_id'] = opts.sessionArtifactId;
+    return this._t.post('fetchyr/form/fill', body);
+  }
+
+  async listMfaChallenges(): Promise<Record<string, unknown>> {
+    return this._t.get('fetchyr/mfa-queue');
+  }
+
+  async getMfaChallenge(challengeId: string): Promise<Record<string, unknown>> {
+    return this._t.get(`fetchyr/mfa/challenges/${challengeId}`);
+  }
+
+  async getMfaStatistics(domain: string): Promise<Record<string, unknown>> {
+    return this._t.get(`fetchyr/mfa/statistics/${domain}`);
+  }
+
+  async listWorkflows(): Promise<Record<string, unknown>> {
+    return this._t.get('fetchyr/workflows');
+  }
+
+  async getWorkflow(workflowId: string): Promise<Record<string, unknown>> {
+    return this._t.get(`fetchyr/workflows/${workflowId}`);
+  }
+
+  async updateWorkflow(workflowId: string, updates: Record<string, unknown>): Promise<Record<string, unknown>> {
+    return this._t.patch(`fetchyr/workflows/${workflowId}`, updates);
+  }
+
+  async deleteWorkflow(workflowId: string): Promise<void> {
+    await this._t.delete(`fetchyr/workflows/${workflowId}`);
+  }
+
+  async getWorkflowStatistics(workflowId: string): Promise<Record<string, unknown>> {
+    return this._t.get(`fetchyr/workflows/${workflowId}/statistics`);
+  }
+
+  async createMultiSiteWorkflow(sites: Record<string, unknown>[], name?: string): Promise<Record<string, unknown>> {
+    const body: Record<string, unknown> = { sites };
+    if (name) body['name'] = name;
+    return this._t.post('fetchyr/multi-site-workflows', body);
+  }
+
   async checkDuplicates(
     records: Record<string, unknown>[],
     opts: { domain?: string } = {},
   ): Promise<DeduplicationResult> {
     const body: Record<string, unknown> = { records };
     if (opts.domain) body['domain'] = opts.domain;
-    const raw = await this._t.post('fetchyr/deduplicate', body);
+    const raw = await this._t.post('fetchyr/deduplication/check', body);
     const result = {
       uniqueRecords: (raw['unique_records'] as Record<string, unknown>[] | undefined) ?? [],
       duplicateCount: Number(raw['duplicate_count'] ?? 0),
@@ -156,6 +220,26 @@ export class FetchyrNamespace {
       error: (raw['error'] as string | undefined) ?? null,
     };
     return { ...result, get ok() { return result.error === null; } };
+  }
+
+  async createDedupSession(config: Record<string, unknown>): Promise<Record<string, unknown>> {
+    return this._t.post('fetchyr/deduplication/sessions', config);
+  }
+
+  async listDedupSessions(): Promise<Record<string, unknown>> {
+    return this._t.get('fetchyr/deduplication/sessions/active');
+  }
+
+  async getDedupSession(sessionId: string): Promise<Record<string, unknown>> {
+    return this._t.get(`fetchyr/deduplication/sessions/${sessionId}`);
+  }
+
+  async getDedupSessionStatistics(sessionId: string): Promise<Record<string, unknown>> {
+    return this._t.get(`fetchyr/deduplication/sessions/${sessionId}/statistics`);
+  }
+
+  async getDedupDomainStatistics(domain: string): Promise<Record<string, unknown>> {
+    return this._t.get(`fetchyr/deduplication/statistics/${domain}`);
   }
 }
 

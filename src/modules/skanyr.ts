@@ -79,6 +79,29 @@ export class SkanyrNamespace {
     }
   }
 
+  async getDiscovery(discoveryId: string): Promise<Record<string, unknown>> { return this._t.get(`skanyr/discover/${discoveryId}`); }
+  async getDiscoveryEvents(discoveryId: string): Promise<Record<string, unknown>> { return this._t.get(`skanyr/discover/${discoveryId}/events`); }
+
+  async analyzeBundle(url: string): Promise<Record<string, unknown>> { return this._t.post('skanyr/analyze-bundle', { url }); }
+  async discoverPageLive(url: string): Promise<Record<string, unknown>> { return this._t.post('skanyr/discover-page/live', { url }); }
+  async detectedApis(pageUrl: string): Promise<Record<string, unknown>> { return this._t.get('skanyr/detected-apis', { page_url: pageUrl }); }
+  async hierarchy(url: string): Promise<Record<string, unknown>> { return this._t.post('skanyr/hierarchy', { url }); }
+  async expandNode(nodeId: string): Promise<Record<string, unknown>> { return this._t.post('skanyr/expand-node', { node_id: nodeId }); }
+  async readerView(url: string): Promise<Record<string, unknown>> { return this._t.post('skanyr/reader-view', { url }); }
+
+  async retry(discoveryId: string, overrides?: Record<string, unknown>): Promise<Record<string, unknown>> {
+    return this._t.post('skanyr/retry', { discovery_id: discoveryId, ...overrides });
+  }
+
+  async health(): Promise<Record<string, unknown>> { return this._t.get('skanyr/health'); }
+
+  async listSessions(): Promise<Record<string, unknown>> { return this._t.get('skanyr/sessions'); }
+  async saveSession(config: Record<string, unknown>): Promise<Record<string, unknown>> { return this._t.post('skanyr/sessions', config); }
+  async getSession(sessionId: string): Promise<Record<string, unknown>> { return this._t.get(`skanyr/sessions/${sessionId}`); }
+  async deleteSession(sessionId: string): Promise<void> { await this._t.delete(`skanyr/sessions/${sessionId}`); }
+  async endSession(sessionId: string): Promise<Record<string, unknown>> { return this._t.post(`skanyr/sessions/${sessionId}/end`, {}); }
+  async updateSessionJob(sessionId: string, jobId: string): Promise<Record<string, unknown>> { return this._t.patch(`skanyr/sessions/${sessionId}/job`, { job_id: jobId }); }
+
   async getApiMap(artifactId: string): Promise<Record<string, unknown>> {
     return this._t.get(`skanyr/api-map/${artifactId}`);
   }
