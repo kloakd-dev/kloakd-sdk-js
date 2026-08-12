@@ -20,7 +20,7 @@ function parseCrawl(raw: Record<string, unknown>, url: string): CrawlResult {
     totalPages: Number(raw['total_pages'] ?? 0),
     maxDepthReached: Number(raw['max_depth_reached'] ?? 0),
     pages,
-    artifactId: (raw['artifact_id'] as string | undefined) ?? null,
+    artifactId: (raw['artifact'] as Record<string, unknown> | undefined)?.['artifact_id'] as string | undefined ?? (raw['artifact_id'] as string | undefined) ?? null,
     error: (raw['error'] as string | undefined) ?? null,
     hasMore: Boolean(raw['has_more']),
     total: Number(raw['total'] ?? 0),
