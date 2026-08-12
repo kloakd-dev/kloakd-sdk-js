@@ -10,7 +10,7 @@ function parseFetch(raw: Record<string, unknown>, url: string): FetchResult {
     html: (raw['html'] as string | undefined) ?? null,
     vendorDetected: (raw['vendor_detected'] as string | undefined) ?? null,
     antiBotBypassed: Boolean(raw['anti_bot_bypassed']),
-    artifactId: (raw['artifact_id'] as string | undefined) ?? null,
+    artifactId: (raw['artifact'] as Record<string, unknown> | undefined)?.['artifact_id'] as string | undefined ?? (raw['artifact_id'] as string | undefined) ?? null,
     error: (raw['error'] as string | undefined) ?? null,
   };
   return { ...result, get ok() { return result.success && result.error === null; } };

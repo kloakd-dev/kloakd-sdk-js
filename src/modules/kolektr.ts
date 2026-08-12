@@ -9,7 +9,7 @@ function parseExtraction(raw: Record<string, unknown>, url: string): ExtractionR
     records: (raw['records'] as Record<string, unknown>[] | undefined) ?? [],
     totalRecords: Number(raw['total_records'] ?? 0),
     pagesScraped: Number(raw['pages_scraped'] ?? 0),
-    artifactId: (raw['artifact_id'] as string | undefined) ?? null,
+    artifactId: (raw['artifact'] as Record<string, unknown> | undefined)?.['artifact_id'] as string | undefined ?? (raw['artifact_id'] as string | undefined) ?? null,
     jobId: (raw['job_id'] as string | undefined) ?? null,
     error: (raw['error'] as string | undefined) ?? null,
     hasMore: Boolean(raw['has_more']),
