@@ -8,7 +8,7 @@
  */
 
 export { Kloakd } from './client.js';
-export type { KloakdOptions } from './client.js';
+export type { KloakdOptions, CrawlOrchestratorOptions } from './client.js';
 
 export {
   ApiError,
@@ -25,6 +25,8 @@ export type {
   ChatEvent,
   ChatTurn,
   CrawlEvent,
+  CrawlPage,
+  CrawlProgressEvent,
   CrawlResult,
   DeduplicationResult,
   DiscoverEvent,
@@ -44,6 +46,7 @@ export type {
   PageNode,
   ParseResult,
   SessionResult,
+  SiteCrawlResult,
   WorkflowExecutionResult,
   WorkflowResult,
 } from './models.js';

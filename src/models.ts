@@ -269,3 +269,38 @@ export interface ExtractionResult extends Paginated {
   error: string | null;
   readonly ok: boolean;
 }
+
+// ── High-level orchestrator ───────────────────────────────────────────────────
+
+export interface CrawlPage {
+  success: boolean;
+  url: string;
+  statusCode: number;
+  tierUsed: number;
+  html: string | null;
+  structuredData: Record<string, unknown> | null;
+  artifactId: string | null;
+  error: string | null;
+  readonly ok: boolean;
+}
+
+export interface SiteCrawlResult {
+  success: boolean;
+  url: string;
+  totalPagesDiscovered: number;
+  pagesFetched: number;
+  pagesFailed: number;
+  pages: CrawlPage[];
+  crawlArtifactId: string | null;
+  error: string | null;
+}
+
+export interface CrawlProgressEvent {
+  type: string;
+  url: string | null;
+  page: number | null;
+  total: number | null;
+  success: boolean | null;
+  error: string | null;
+  metadata: Record<string, unknown>;
+}
