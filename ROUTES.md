@@ -1,4 +1,4 @@
-# Routes the SDK calls (0.3.0)
+# Routes the SDK calls (0.4.0)
 
 Checked against the API's route list (`tests/fixtures/routes.tsv`, generated
 from kobe-scraper 4fb33ea4 with the module routers mounted as
@@ -39,12 +39,12 @@ All paths are under `/api/v1/organizations/{organization_id}/`.
 | POST | fetchyr/deduplication/sessions | wrong fields | `{name, strategy?}` |
 | GET | fetchyr/deduplication/... | live | unchanged |
 | POST | kolektr/extract, extract/html | wrong fields (`schema`, `limit`, `offset`) | `schema_spec`; no paging fields |
-| GET/POST | kolektr/api-data/..., content, jobs, extraction-jobs, pipeline, progress, scrapers | live | unchanged (`kolektr/jobs` POST is a server stub: GAP-API-2) |
+| GET/POST | kolektr/api-data/..., content, jobs, extraction-jobs, pipeline, progress, scrapers | live | unchanged (`kolektr/jobs` POST was a server stub, GAP-API-2: removed in 0.4.0) |
 | POST | nexus/analyze | wrong fields (`html` optional) | `analyze(url, html, opts)` |
 | POST | nexus/synthesize | wrong fields (`perception_id`) | `synthesize(url, html, goal)` |
 | POST | nexus/verify, execute, knowledge | live, response read wrongly | response fields fixed |
 | POST | nexus/reason | wrong fields (free body) | `reason(queryType, parameters)` |
-| * | nexus/recommendations/... | live | unchanged (server-side many are broken: GAP-SEC-6) |
+| * | nexus/recommendations/... | live | unchanged (server-side many are broken: GAP-SEC-6; removed in 0.4.0) |
 | POST/DELETE | parlyr/parse, chat, chat/{id} | live | unchanged |
 | POST | skanyr/discover, discover/stream | removed | discovery is `webgrph.crawl` |
 | GET | skanyr/discover/{id}[/events] | removed | — |
@@ -73,3 +73,21 @@ graph, extraction text and structure.
 
 Not covered: `GET skanyr/resources/{id}/download` (binary body) and
 `GET parlyr/chat/{id}/events`.
+
+## Changed in 0.4.0
+
+The route list (`tests/fixtures/routes.tsv`) drops the 13
+`nexus/recommendations/...` routes, the standalone `recommendations/...`
+router (no longer mounted) and `POST kolektr/jobs`, and adds the hand-off
+poll `GET handoff/{job_id}`.
+
+| Method | Path | 0.4.0 |
+|---|---|---|
+| * | nexus/recommendations/... (13 routes) | removed with their methods (`recommendAnalyze`, `listRecommendationApplications`, cache, hooks, preferences, statistics) |
+| POST | kolektr/jobs | `createJob` removed |
+| POST | kolektr/extract, fetchyr/authenticate, fetchyr/form/detect, fetchyr/form/fill, fetchyr/mfa/detect, nexus/analyze, nexus/synthesize, nexus/execute | a 202 hand-off is followed: GET handoff/{job_id} (the 202's `poll_url`) until completed or failed |
+| POST | evadr/fetch | a 202 is followed through its `poll_url`, GET evadr/jobs/{job_id} |
+| POST | nexus/execute | reads `execution_result_id` (for `knowledge`) |
+
+`tests/contract.test.ts` checks that each of the nine methods follows a 202
+through a live poll route.
