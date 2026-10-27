@@ -1,4 +1,6 @@
 import type { HttpTransport } from '../_http.js';
+import { postFollowingHandoff } from '../_handoff.js';
+import type { HandoffOptions } from '../_handoff.js';
 import type { ExtractionResult } from '../models.js';
 
 function parseExtraction(raw: Record<string, unknown>, url: string): ExtractionResult {
@@ -52,7 +54,8 @@ export function toSchemaSpec(schema: SchemaSpec | Record<string, string>): Recor
   };
 }
 
-export interface PageOptions {
+/** Extraction options; the poll options apply when the API hands the extraction off as a job (202). */
+export interface PageOptions extends HandoffOptions {
   schema?: SchemaSpec | Record<string, string>;
   level?: string;
   fetchArtifactId?: string;
@@ -64,6 +67,11 @@ export interface PageOptions {
 export class KolektrNamespace {
   constructor(private readonly _t: HttpTransport) {}
 
+  /**
+   * Extract structured data from a URL (`POST kolektr/extract`). An
+   * extraction still running after about 85 s is handed off as a job (202);
+   * this follows it and returns the same result.
+   */
   async page(url: string, opts: PageOptions = {}): Promise<ExtractionResult> {
     const body: Record<string, unknown> = { url };
     if (opts.schema) body['schema_spec'] = toSchemaSpec(opts.schema);
@@ -72,8 +80,7 @@ export class KolektrNamespace {
     if (opts.sessionArtifactId) body['session_artifact_id'] = opts.sessionArtifactId;
     if (opts.apiMapArtifactId) body['api_map_artifact_id'] = opts.apiMapArtifactId;
     if (opts.options) body['options'] = opts.options;
-    const raw = await this._t.post('kolektr/extract', body);
-    return parseExtraction(raw, url);
+    return parseExtraction(await postFollowingHandoff(this._t, 'kolektr/extract', body, opts), url);
   }
 
   /** All records of a page's extraction (the API returns them in one response). */
@@ -109,7 +116,6 @@ export class KolektrNamespace {
   async deleteContent(itemId: string): Promise<void> { await this._t.delete(`kolektr/content/${itemId}`); }
 
   async listJobs(): Promise<Record<string, unknown>> { return this._t.get('kolektr/jobs'); }
-  async createJob(config: Record<string, unknown>): Promise<Record<string, unknown>> { return this._t.post('kolektr/jobs', config); }
   async getJob(jobId: string): Promise<Record<string, unknown>> { return this._t.get(`kolektr/jobs/${jobId}`); }
   async getJobStatus(jobId: string): Promise<Record<string, unknown>> { return this._t.get(`kolektr/extraction-jobs/${jobId}/status`); }
   async getJobProgress(jobId: string): Promise<Record<string, unknown>> { return this._t.get(`kolektr/jobs/${jobId}/progress`); }

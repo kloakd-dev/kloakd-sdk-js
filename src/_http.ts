@@ -13,7 +13,7 @@
 
 import { KloakdError, QuotaExceededError, raiseForStatus } from './errors.js';
 
-export const SDK_VERSION = '0.3.0';
+export const SDK_VERSION = '0.4.0';
 const RETRYABLE = new Set([429, 500, 502, 503, 504]);
 
 function sdkHeader(): string {
@@ -73,13 +73,47 @@ export class HttpTransport {
     return `${this._baseUrl}${this.orgPrefix()}/${path.replace(/^\//, '')}`;
   }
 
+  /**
+   * The URL of a path the API gave as absolute (`/api/v1/...`, such as a
+   * 202's `poll_url`): joined to the configured base URL, as every other
+   * request is. A full http(s) URL is used as it is.
+   */
+  absoluteUrl(path: string): string {
+    if (/^https?:\/\//.test(path)) return path;
+    return `${this._baseUrl}/${path.replace(/^\//, '')}`;
+  }
+
   async request<T = Record<string, unknown>>(
     method: string,
     path: string,
     body?: Record<string, unknown>,
     params?: Record<string, string>,
   ): Promise<T> {
-    let fullUrl = this.url(path);
+    return (await this.requestWithStatus<T>(method, path, body, params)).body;
+  }
+
+  /** As request(), with the HTTP status of the answer (to tell a 202 hand-off from a 200). */
+  async requestWithStatus<T = Record<string, unknown>>(
+    method: string,
+    path: string,
+    body?: Record<string, unknown>,
+    params?: Record<string, string>,
+  ): Promise<{ status: number; body: T }> {
+    return this.send<T>(method, this.url(path), body, params);
+  }
+
+  /** GET a path the API gave as absolute (see absoluteUrl). */
+  async getAbsolute<T = Record<string, unknown>>(path: string): Promise<T> {
+    return (await this.send<T>('GET', this.absoluteUrl(path))).body;
+  }
+
+  private async send<T>(
+    method: string,
+    url: string,
+    body?: Record<string, unknown>,
+    params?: Record<string, string>,
+  ): Promise<{ status: number; body: T }> {
+    let fullUrl = url;
     if (params && Object.keys(params).length > 0) {
       fullUrl += '?' + new URLSearchParams(params).toString();
     }
@@ -104,7 +138,7 @@ export class HttpTransport {
 
       try {
         raiseForStatus(resp.status, json, resp.headers);
-        return json as T;
+        return { status: resp.status, body: json as T };
       } catch (err) {
         if (!(err instanceof KloakdError)) throw err;
         if (!RETRYABLE.has(err.statusCode) || err instanceof QuotaExceededError) throw err;
@@ -130,6 +164,14 @@ export class HttpTransport {
 
   async post<T = Record<string, unknown>>(path: string, body: Record<string, unknown>): Promise<T> {
     return this.request<T>('POST', path, body);
+  }
+
+  /** POST and return the HTTP status with the body. */
+  async postWithStatus<T = Record<string, unknown>>(
+    path: string,
+    body: Record<string, unknown>,
+  ): Promise<{ status: number; body: T }> {
+    return this.requestWithStatus<T>('POST', path, body);
   }
 
   async put<T = Record<string, unknown>>(path: string, body: Record<string, unknown>): Promise<T> {

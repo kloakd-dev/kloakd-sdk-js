@@ -1,4 +1,6 @@
 import type { HttpTransport } from '../_http.js';
+import { postFollowingHandoff } from '../_handoff.js';
+import type { HandoffOptions } from '../_handoff.js';
 import type {
   NexusAnalyzeResult,
   NexusExecuteResult,
@@ -12,6 +14,11 @@ function artifactIdOf(raw: Record<string, unknown>): string | null {
   return (artifact?.['artifact_id'] as string | undefined) ?? (raw['artifact_id'] as string | undefined) ?? null;
 }
 
+/**
+ * NEXUS. `analyze`, `synthesize` and `execute` may run past the API's
+ * synchronous limit; the API then hands them off as a job (202) and these
+ * methods follow it to the same result (poll options: HandoffOptions).
+ */
 export class NexusNamespace {
   constructor(private readonly _t: HttpTransport) {}
 
@@ -19,11 +26,11 @@ export class NexusNamespace {
   async analyze(
     url: string,
     html: string,
-    opts: { constraints?: Record<string, unknown> } = {},
+    opts: { constraints?: Record<string, unknown> } & HandoffOptions = {},
   ): Promise<NexusAnalyzeResult> {
     const body: Record<string, unknown> = { url, html };
     if (opts.constraints) body['constraints'] = opts.constraints;
-    const raw = await this._t.post('nexus/analyze', body);
+    const raw = await postFollowingHandoff(this._t, 'nexus/analyze', body, opts);
     const result = {
       url: (raw['url'] as string | undefined) ?? url,
       perceptionId: String(raw['perception_id'] ?? ''),
@@ -38,8 +45,8 @@ export class NexusNamespace {
   }
 
   /** Generate an extraction program for a page and a goal. */
-  async synthesize(url: string, html: string, goal: string): Promise<NexusSynthesisResult> {
-    const raw = await this._t.post('nexus/synthesize', { url, html, goal });
+  async synthesize(url: string, html: string, goal: string, opts: HandoffOptions = {}): Promise<NexusSynthesisResult> {
+    const raw = await postFollowingHandoff(this._t, 'nexus/synthesize', { url, html, goal }, opts);
     const result = {
       url: (raw['url'] as string | undefined) ?? url,
       goal: (raw['goal'] as string | undefined) ?? goal,
@@ -67,14 +74,18 @@ export class NexusNamespace {
     return { ...result, get ok() { return result.verified && result.error === null; } };
   }
 
+  /**
+   * Execute a verified strategy and return its records. The result's
+   * `executionResultId` is the id to pass to `knowledge()`.
+   */
   async execute(
     strategyId: string,
     url: string,
-    opts: { options?: Record<string, unknown> } = {},
+    opts: { options?: Record<string, unknown> } & HandoffOptions = {},
   ): Promise<NexusExecuteResult> {
     const body: Record<string, unknown> = { strategy_id: strategyId, url };
     if (opts.options) body['options'] = opts.options;
-    const raw = await this._t.post('nexus/execute', body);
+    const raw = await postFollowingHandoff(this._t, 'nexus/execute', body, opts);
     const result = {
       url: (raw['url'] as string | undefined) ?? url,
       strategyId: String(raw['strategy_id'] ?? strategyId),
@@ -82,11 +93,17 @@ export class NexusNamespace {
       records: (raw['records'] as Record<string, unknown>[] | undefined) ?? [],
       artifactId: artifactIdOf(raw),
       durationMs: Number(raw['duration_ms'] ?? 0),
+      executionResultId: (raw['execution_result_id'] as string | undefined) ?? null,
       error: (raw['error_message'] as string | undefined) ?? null,
     };
     return { ...result, get ok() { return result.success && result.error === null; } };
   }
 
+  /**
+   * Learn from an execution result (Knowledge Layer). `executionResultId`
+   * is `executionResultId` on the result of `execute()` (the API's
+   * `execution_result_id`).
+   */
   async knowledge(executionResultId: string): Promise<NexusKnowledgeResult> {
     const raw = await this._t.post('nexus/knowledge', { execution_result_id: executionResultId });
     const result = {
@@ -107,27 +124,4 @@ export class NexusNamespace {
     if (opts.timeoutSecs) body['timeout_secs'] = opts.timeoutSecs;
     return this._t.post('nexus/reason', body);
   }
-
-  async recommendAnalyze(data: Record<string, unknown>): Promise<Record<string, unknown>> {
-    return this._t.post('nexus/recommendations/analyze', data);
-  }
-
-  async listRecommendationApplications(): Promise<Record<string, unknown>> {
-    return this._t.get('nexus/recommendations/applications');
-  }
-
-  async getCacheStatistics(): Promise<Record<string, unknown>> { return this._t.get('nexus/recommendations/cache/statistics'); }
-  async cleanupCache(): Promise<Record<string, unknown>> { return this._t.post('nexus/recommendations/cache/cleanup', {}); }
-  async invalidateCache(): Promise<Record<string, unknown>> { return this._t.post('nexus/recommendations/cache/invalidate', {}); }
-
-  async getHooksStatus(): Promise<Record<string, unknown>> { return this._t.get('nexus/recommendations/hooks/status'); }
-  async enableHook(hookName: string): Promise<Record<string, unknown>> { return this._t.post(`nexus/recommendations/hooks/${hookName}/enable`, {}); }
-  async disableHook(hookName: string): Promise<Record<string, unknown>> { return this._t.post(`nexus/recommendations/hooks/${hookName}/disable`, {}); }
-
-  async createPreference(preference: Record<string, unknown>): Promise<Record<string, unknown>> { return this._t.post('nexus/recommendations/preferences', preference); }
-  async getPreferences(userId: string): Promise<Record<string, unknown>> { return this._t.get(`nexus/recommendations/preferences/${userId}`); }
-  async updatePreference(preferenceId: string, data: Record<string, unknown>): Promise<Record<string, unknown>> { return this._t.put(`nexus/recommendations/preferences/${preferenceId}`, data); }
-  async deletePreference(preferenceId: string): Promise<void> { await this._t.delete(`nexus/recommendations/preferences/${preferenceId}`); }
-
-  async getRecommendationStatistics(): Promise<Record<string, unknown>> { return this._t.get('nexus/recommendations/statistics'); }
 }

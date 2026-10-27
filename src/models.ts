@@ -122,6 +122,8 @@ export interface NexusExecuteResult {
   records: Record<string, unknown>[];
   artifactId: string | null;
   durationMs: number;
+  /** The id to pass to `nexus.knowledge()`; null when the API gave none. */
+  executionResultId: string | null;
   error: string | null;
   readonly ok: boolean;
 }

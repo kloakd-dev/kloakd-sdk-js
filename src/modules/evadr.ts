@@ -1,5 +1,6 @@
 import type { HttpTransport } from '../_http.js';
-import { JobFailedError, JobTimeoutError } from '../errors.js';
+import { followJob, postFollowingHandoff } from '../_handoff.js';
+import type { HandoffOptions } from '../_handoff.js';
 import type { AnalyzeResult, FetchEvent, FetchResult } from '../models.js';
 
 function parseFetch(raw: Record<string, unknown>, url: string): FetchResult {
@@ -17,14 +18,10 @@ function parseFetch(raw: Record<string, unknown>, url: string): FetchResult {
   return { ...result, get ok() { return result.success && result.error === null; } };
 }
 
-export interface FetchOptions {
+export interface FetchOptions extends HandoffOptions {
   forceBrowser?: boolean;
   useProxy?: boolean;
   sessionArtifactId?: string;
-  /** How often to poll a fetch the API handed off as a job (202). Default 3000 ms. */
-  pollIntervalMs?: number;
-  /** How long to follow a handed-off fetch before throwing JobTimeoutError. Default 15 minutes. */
-  pollTimeoutMs?: number;
 }
 
 export interface FetchAsyncOptions {
@@ -34,37 +31,20 @@ export interface FetchAsyncOptions {
   webhookUrl?: string;
 }
 
-/** The 202 body of `POST …/evadr/fetch` when the fetch continues as a job. */
-interface HandedOff {
-  job_id: string;
-  poll_url: string;
-}
-
-function isHandedOff(raw: Record<string, unknown>): raw is Record<string, unknown> & HandedOff {
-  return typeof raw['job_id'] === 'string' && 'poll_url' in raw;
-}
-
-const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
-
 export class EvadrNamespace {
   constructor(private readonly _t: HttpTransport) {}
 
   /**
    * Fetch a page. The API answers within about 85 s; a fetch still running
-   * then is handed off as a job (202), which this follows to its result.
+   * then is handed off as a job (202), which this follows to its result
+   * (polling the 202's `poll_url`; see HandoffOptions).
    */
   async fetch(url: string, opts: FetchOptions = {}): Promise<FetchResult> {
     const body: Record<string, unknown> = { url };
     if (opts.forceBrowser) body['force_browser'] = true;
     if (opts.useProxy) body['use_proxy'] = true;
     if (opts.sessionArtifactId) body['session_artifact_id'] = opts.sessionArtifactId;
-    const raw = await this._t.post('evadr/fetch', body);
-    if (!isHandedOff(raw)) return parseFetch(raw, url);
-    const result = await this.waitForJob(raw.job_id, {
-      pollIntervalMs: opts.pollIntervalMs ?? 3000,
-      timeoutMs: opts.pollTimeoutMs ?? 15 * 60 * 1000,
-    });
-    return parseFetch(result, url);
+    return parseFetch(await postFollowingHandoff(this._t, 'evadr/fetch', body, opts), url);
   }
 
   /** Start a fetch as a job; returns the job id (poll with getJob or waitForJob). */
@@ -83,20 +63,10 @@ export class EvadrNamespace {
     jobId: string,
     opts: { pollIntervalMs?: number; timeoutMs?: number } = {},
   ): Promise<Record<string, unknown>> {
-    const interval = opts.pollIntervalMs ?? 3000;
-    const deadline = Date.now() + (opts.timeoutMs ?? 15 * 60 * 1000);
-    for (;;) {
-      const job = await this.getJob(jobId);
-      const status = String(job['status'] ?? '');
-      if (status === 'completed') return (job['result'] as Record<string, unknown> | undefined) ?? {};
-      if (status === 'failed') {
-        throw new JobFailedError(String(job['error'] ?? 'Fetch job failed'), jobId);
-      }
-      if (Date.now() + interval > deadline) {
-        throw new JobTimeoutError(`Fetch job ${jobId} still running`, jobId);
-      }
-      await sleep(interval);
-    }
+    return followJob(jobId, () => this.getJob(jobId), {
+      pollIntervalMs: opts.pollIntervalMs,
+      pollTimeoutMs: opts.timeoutMs,
+    });
   }
 
   /** Start a fetch as a job and stream its progress events. */

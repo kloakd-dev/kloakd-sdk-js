@@ -30,6 +30,13 @@ describe('nexus', () => {
     expect(r.ok).toBe(false);
   });
 
+  it('execute reads execution_result_id, the id knowledge() takes', async () => {
+    const r = await makeClient(mockFetch({ url: 'u', strategy_id: 's1', records: [], success: true, execution_result_id: 'er-7' })).nexus.execute('s1', 'u');
+    expect(r.executionResultId).toBe('er-7');
+    const without = await makeClient(mockFetch({ url: 'u', strategy_id: 's1', success: true })).nexus.execute('s1', 'u');
+    expect(without.executionResultId).toBeNull();
+  });
+
   it('knowledge reads patterns', async () => {
     const r = await makeClient(mockFetch({ execution_result_id: 'e1', learned_concepts: [], patterns: [{ p: 1 }], total_patterns: 1 })).nexus.knowledge('e1');
     expect([r.patterns.length, r.totalPatterns]).toEqual([1, 1]);

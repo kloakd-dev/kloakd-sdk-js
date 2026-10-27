@@ -1,4 +1,6 @@
 import type { HttpTransport } from '../_http.js';
+import { postFollowingHandoff } from '../_handoff.js';
+import type { HandoffOptions } from '../_handoff.js';
 import type {
   DuplicateCheckResult,
   FormDetectionResult,
@@ -54,12 +56,14 @@ export class FetchyrNamespace {
   /**
    * Log in to a site with credentials stored under `credentialName`
    * (see storeCredentials); produces an authenticated session artifact.
+   * A login still running after about 85 s is handed off as a job (202);
+   * this follows it and returns the same result.
    */
-  async authenticate(credentialName: string, targetUrl: string): Promise<SessionResult> {
-    const raw = await this._t.post('fetchyr/authenticate', {
+  async authenticate(credentialName: string, targetUrl: string, opts: HandoffOptions = {}): Promise<SessionResult> {
+    const raw = await postFollowingHandoff(this._t, 'fetchyr/authenticate', {
       credential_name: credentialName,
       target_url: targetUrl,
-    });
+    }, opts);
     const result = {
       success: Boolean(raw['success']),
       sessionId: String(raw['session_id'] ?? ''),
@@ -138,10 +142,11 @@ export class FetchyrNamespace {
     return parseExecution(raw);
   }
 
-  async detectForms(url: string, opts: { sessionArtifactId?: string } = {}): Promise<FormDetectionResult> {
+  /** Detect the forms on a page; follows a 202 hand-off like authenticate. */
+  async detectForms(url: string, opts: { sessionArtifactId?: string } & HandoffOptions = {}): Promise<FormDetectionResult> {
     const body: Record<string, unknown> = { url };
     if (opts.sessionArtifactId) body['session_artifact_id'] = opts.sessionArtifactId;
-    const raw = await this._t.post('fetchyr/form/detect', body);
+    const raw = await postFollowingHandoff(this._t, 'fetchyr/form/detect', body, opts);
     return {
       url: (raw['url'] as string | undefined) ?? url,
       forms: (raw['fields'] as Record<string, unknown>[] | undefined) ?? [],
@@ -151,16 +156,18 @@ export class FetchyrNamespace {
     };
   }
 
-  async fillForm(url: string, formData: Record<string, string>, opts: { sessionArtifactId?: string } = {}): Promise<Record<string, unknown>> {
+  /** Fill and submit a form; follows a 202 hand-off like authenticate. */
+  async fillForm(url: string, formData: Record<string, string>, opts: { sessionArtifactId?: string } & HandoffOptions = {}): Promise<Record<string, unknown>> {
     const body: Record<string, unknown> = { url, form_data: formData };
     if (opts.sessionArtifactId) body['session_artifact_id'] = opts.sessionArtifactId;
-    return this._t.post('fetchyr/form/fill', body);
+    return postFollowingHandoff(this._t, 'fetchyr/form/fill', body, opts);
   }
 
-  async detectMfa(url: string, opts: { sessionArtifactId?: string } = {}): Promise<MfaDetectionResult> {
+  /** Detect an MFA challenge on a page; follows a 202 hand-off like authenticate. */
+  async detectMfa(url: string, opts: { sessionArtifactId?: string } & HandoffOptions = {}): Promise<MfaDetectionResult> {
     const body: Record<string, unknown> = { url };
     if (opts.sessionArtifactId) body['session_artifact_id'] = opts.sessionArtifactId;
-    const raw = await this._t.post('fetchyr/mfa/detect', body);
+    const raw = await postFollowingHandoff(this._t, 'fetchyr/mfa/detect', body, opts);
     return {
       mfaDetected: Boolean(raw['mfa_detected']),
       challengeId: (raw['challenge_id'] as string | undefined) ?? null,

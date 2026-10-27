@@ -3,8 +3,11 @@
  *
  * tests/fixtures/routes.tsv is the backend's route list (METHOD\tPATH,
  * generated from kobe-scraper 4fb33ea4 with the module routers mounted as
- * kernel/bootstrap.py does). Each public method of each namespace is called
- * with placeholder arguments against a recording fetch.
+ * kernel/bootstrap.py does; for 0.4.0 the nexus/recommendations routes, the
+ * unmounted standalone recommendations router and POST kolektr/jobs are
+ * removed, and the hand-off poll GET handoff/{job_id} is added). Each public
+ * method of each namespace is called with placeholder arguments against a
+ * recording fetch.
  */
 import { readFileSync } from 'fs';
 import { join } from 'path';
@@ -92,5 +95,64 @@ describe('the SDK calls only live routes', () => {
     const calls = await callEverything();
     expect(calls.every((c) => c.path.startsWith(ORG_PREFIX))).toBe(true);
     expect(TEST_BASE_URL).toBe('https://api.kloakd.dev');
+  });
+});
+
+/** The routes that answer 202 after the synchronous limit, and the method that calls each. */
+const HANDOFF_CALLS: Array<{ caller: string; route: string; poll: string; call: (c: ReturnType<typeof makeClient>) => Promise<unknown> }> = [
+  { caller: 'evadr.fetch', route: 'evadr/fetch', poll: 'evadr/jobs/h-1', call: (c) => c.evadr.fetch('u', { pollIntervalMs: 1 }) },
+  { caller: 'kolektr.page', route: 'kolektr/extract', poll: 'handoff/h-1', call: (c) => c.kolektr.page('u', { pollIntervalMs: 1 }) },
+  { caller: 'fetchyr.authenticate', route: 'fetchyr/authenticate', poll: 'handoff/h-1', call: (c) => c.fetchyr.authenticate('n', 'u', { pollIntervalMs: 1 }) },
+  { caller: 'fetchyr.detectForms', route: 'fetchyr/form/detect', poll: 'handoff/h-1', call: (c) => c.fetchyr.detectForms('u', { pollIntervalMs: 1 }) },
+  { caller: 'fetchyr.fillForm', route: 'fetchyr/form/fill', poll: 'handoff/h-1', call: (c) => c.fetchyr.fillForm('u', {}, { pollIntervalMs: 1 }) },
+  { caller: 'fetchyr.detectMfa', route: 'fetchyr/mfa/detect', poll: 'handoff/h-1', call: (c) => c.fetchyr.detectMfa('u', { pollIntervalMs: 1 }) },
+  { caller: 'nexus.analyze', route: 'nexus/analyze', poll: 'handoff/h-1', call: (c) => c.nexus.analyze('u', '<html/>', { pollIntervalMs: 1 }) },
+  { caller: 'nexus.synthesize', route: 'nexus/synthesize', poll: 'handoff/h-1', call: (c) => c.nexus.synthesize('u', '<html/>', 'g', { pollIntervalMs: 1 }) },
+  { caller: 'nexus.execute', route: 'nexus/execute', poll: 'handoff/h-1', call: (c) => c.nexus.execute('s', 'u', { pollIntervalMs: 1 }) },
+];
+
+describe('every route that can hand off is followed through a live poll route', () => {
+  it.each(HANDOFF_CALLS)('$caller follows a 202 from $route', async ({ route, poll, call }) => {
+    const answers = [
+      { status: 202, body: { job_id: 'h-1', status: 'running', reason: 'sync_limit_reached', waited_seconds: 85, poll_url: `${ORG_PREFIX}/${poll}`, message: '' } },
+      { status: 200, body: { job_id: 'h-1', status: 'running' } },
+      { status: 200, body: { job_id: 'h-1', status: 'completed', result: { success: true, marker: 'from-job' } } },
+    ];
+    const fetch = jest.fn(async () => {
+      const a = answers.shift()!;
+      return { status: a.status, ok: true, headers: { get: (h: string) => (h === 'content-type' ? 'application/json' : null) }, json: async () => a.body, body: undefined };
+    });
+    const out = (await call(makeClient(fetch))) as Record<string, unknown>;
+    const seen = fetch.mock.calls.map((c) => ({
+      method: ((c[1] ?? {}) as { method?: string }).method ?? 'GET',
+      path: new URL(String(c[0])).pathname,
+    }));
+    expect(seen).toEqual([
+      { method: 'POST', path: `${ORG_PREFIX}/${route}` },
+      { method: 'GET', path: `${ORG_PREFIX}/${poll}` },
+      { method: 'GET', path: `${ORG_PREFIX}/${poll}` },
+    ]);
+    expect(seen.every((c) => isLive(c.method, c.path))).toBe(true);
+    expect(out).toBeTruthy(); // resolved with the parsed result; parsing is checked in handoff.test.ts
+  });
+
+  it('covers every route the API decorates with @hands_off_after_limit, and evadr/fetch', () => {
+    expect(HANDOFF_CALLS.map((h) => h.route).sort()).toEqual([
+      'evadr/fetch',
+      'fetchyr/authenticate',
+      'fetchyr/form/detect',
+      'fetchyr/form/fill',
+      'fetchyr/mfa/detect',
+      'kolektr/extract',
+      'nexus/analyze',
+      'nexus/execute',
+      'nexus/synthesize',
+    ]);
+  });
+
+  it('the removed routes are not in the route list', () => {
+    expect(routes.some((r) => r.path.includes('/recommendations/'))).toBe(false);
+    expect(isLive('POST', `${ORG_PREFIX}/kolektr/jobs`)).toBe(false);
+    expect(isLive('GET', `${ORG_PREFIX}/kolektr/jobs/j-1`)).toBe(true);
   });
 });
