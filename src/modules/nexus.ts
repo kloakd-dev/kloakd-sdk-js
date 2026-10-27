@@ -7,42 +7,48 @@ import type {
   NexusVerifyResult,
 } from '../models.js';
 
+function artifactIdOf(raw: Record<string, unknown>): string | null {
+  const artifact = raw['artifact'] as Record<string, unknown> | undefined;
+  return (artifact?.['artifact_id'] as string | undefined) ?? (raw['artifact_id'] as string | undefined) ?? null;
+}
+
 export class NexusNamespace {
   constructor(private readonly _t: HttpTransport) {}
 
+  /** Analyse a page (its URL and HTML) and propose an extraction strategy. */
   async analyze(
     url: string,
-    opts: { html?: string; constraints?: Record<string, unknown> } = {},
+    html: string,
+    opts: { constraints?: Record<string, unknown> } = {},
   ): Promise<NexusAnalyzeResult> {
-    const body: Record<string, unknown> = { url };
-    if (opts.html) body['html'] = opts.html;
+    const body: Record<string, unknown> = { url, html };
     if (opts.constraints) body['constraints'] = opts.constraints;
     const raw = await this._t.post('nexus/analyze', body);
     const result = {
-      perceptionId: (raw['perception_id'] as string | undefined) ?? '',
+      url: (raw['url'] as string | undefined) ?? url,
+      perceptionId: String(raw['perception_id'] ?? ''),
+      reasoningId: (raw['reasoning_id'] as string | undefined) ?? null,
       strategy: (raw['strategy'] as Record<string, unknown> | undefined) ?? {},
       pageType: (raw['page_type'] as string | undefined) ?? 'unknown',
-      complexityLevel: (raw['complexity_level'] as string | undefined) ?? 'unknown',
-      artifactId: (raw['artifact_id'] as string | undefined) ?? null,
-      durationMs: Number(raw['duration_ms'] ?? 0),
+      confidence: Number(raw['confidence'] ?? 0),
+      artifactId: artifactIdOf(raw),
       error: (raw['error'] as string | undefined) ?? null,
     };
     return { ...result, get ok() { return result.error === null; } };
   }
 
-  async synthesize(
-    perceptionId: string,
-    opts: { strategy?: Record<string, unknown>; timeout?: number } = {},
-  ): Promise<NexusSynthesisResult> {
-    const body: Record<string, unknown> = { perception_id: perceptionId };
-    if (opts.strategy) body['strategy'] = opts.strategy;
-    if (opts.timeout) body['timeout'] = opts.timeout;
-    const raw = await this._t.post('nexus/synthesize', body);
+  /** Generate an extraction program for a page and a goal. */
+  async synthesize(url: string, html: string, goal: string): Promise<NexusSynthesisResult> {
+    const raw = await this._t.post('nexus/synthesize', { url, html, goal });
     const result = {
-      strategyId: (raw['strategy_id'] as string | undefined) ?? '',
-      strategyName: (raw['strategy_name'] as string | undefined) ?? '',
-      generatedCode: (raw['generated_code'] as string | undefined) ?? '',
-      artifactId: (raw['artifact_id'] as string | undefined) ?? null,
+      url: (raw['url'] as string | undefined) ?? url,
+      goal: (raw['goal'] as string | undefined) ?? goal,
+      strategyId: String(raw['strategy_id'] ?? ''),
+      strategyName: String(raw['strategy_name'] ?? ''),
+      strategyType: (raw['strategy_type'] as string | undefined) ?? null,
+      program: String(raw['program'] ?? ''),
+      steps: (raw['steps'] as Record<string, unknown>[] | undefined) ?? [],
+      confidence: Number(raw['confidence'] ?? 0),
       synthesisTimeMs: Number(raw['synthesis_time_ms'] ?? 0),
       error: (raw['error'] as string | undefined) ?? null,
     };
@@ -52,52 +58,54 @@ export class NexusNamespace {
   async verify(strategyId: string): Promise<NexusVerifyResult> {
     const raw = await this._t.post('nexus/verify', { strategy_id: strategyId });
     const result = {
-      verificationResultId: (raw['verification_result_id'] as string | undefined) ?? '',
-      isSafe: Boolean(raw['is_safe']),
-      riskScore: Number(raw['risk_score'] ?? 0),
+      strategyId: String(raw['strategy_id'] ?? strategyId),
+      verified: Boolean(raw['verified']),
       safetyScore: Number(raw['safety_score'] ?? 0),
       violations: (raw['violations'] as string[] | undefined) ?? [],
-      durationMs: Number(raw['duration_ms'] ?? 0),
       error: (raw['error'] as string | undefined) ?? null,
     };
-    return { ...result, get ok() { return result.isSafe && result.error === null; } };
+    return { ...result, get ok() { return result.verified && result.error === null; } };
   }
 
-  async execute(strategyId: string, url: string): Promise<NexusExecuteResult> {
-    const raw = await this._t.post('nexus/execute', { strategy_id: strategyId, url });
+  async execute(
+    strategyId: string,
+    url: string,
+    opts: { options?: Record<string, unknown> } = {},
+  ): Promise<NexusExecuteResult> {
+    const body: Record<string, unknown> = { strategy_id: strategyId, url };
+    if (opts.options) body['options'] = opts.options;
+    const raw = await this._t.post('nexus/execute', body);
     const result = {
-      executionResultId: (raw['execution_result_id'] as string | undefined) ?? '',
+      url: (raw['url'] as string | undefined) ?? url,
+      strategyId: String(raw['strategy_id'] ?? strategyId),
       success: Boolean(raw['success']),
-      records: (raw['data'] as Record<string, unknown>[] | undefined) ?? [],
-      artifactId: (raw['artifact_id'] as string | undefined) ?? null,
+      records: (raw['records'] as Record<string, unknown>[] | undefined) ?? [],
+      artifactId: artifactIdOf(raw),
       durationMs: Number(raw['duration_ms'] ?? 0),
-      error: (raw['error'] as string | undefined) ?? null,
+      error: (raw['error_message'] as string | undefined) ?? null,
     };
     return { ...result, get ok() { return result.success && result.error === null; } };
   }
 
-  async knowledge(
-    executionResultId: string,
-    opts: { limit?: number; offset?: number } = {},
-  ): Promise<NexusKnowledgeResult> {
-    const raw = await this._t.post('nexus/knowledge', {
-      execution_result_id: executionResultId,
-      limit: opts.limit ?? 100,
-      offset: opts.offset ?? 0,
-    });
+  async knowledge(executionResultId: string): Promise<NexusKnowledgeResult> {
+    const raw = await this._t.post('nexus/knowledge', { execution_result_id: executionResultId });
     const result = {
+      executionResultId: String(raw['execution_result_id'] ?? executionResultId),
       learnedConcepts: (raw['learned_concepts'] as Record<string, unknown>[] | undefined) ?? [],
-      learnedPatterns: (raw['learned_patterns'] as Record<string, unknown>[] | undefined) ?? [],
+      patterns: (raw['patterns'] as Record<string, unknown>[] | undefined) ?? [],
+      totalPatterns: Number(raw['total_patterns'] ?? 0),
       durationMs: Number(raw['duration_ms'] ?? 0),
       error: (raw['error'] as string | undefined) ?? null,
-      hasMore: Boolean(raw['has_more']),
-      total: Number(raw['total'] ?? 0),
     };
     return { ...result, get ok() { return result.error === null; } };
   }
 
-  async reason(context: Record<string, unknown>): Promise<Record<string, unknown>> {
-    return this._t.post('nexus/reason', context);
+  /** Run a reasoning query (`query_type` is required by the API). */
+  async reason(queryType: string, parameters: Record<string, unknown> = {}, opts: { perceptionId?: string; timeoutSecs?: number } = {}): Promise<Record<string, unknown>> {
+    const body: Record<string, unknown> = { query_type: queryType, parameters };
+    if (opts.perceptionId) body['perception_id'] = opts.perceptionId;
+    if (opts.timeoutSecs) body['timeout_secs'] = opts.timeoutSecs;
+    return this._t.post('nexus/reason', body);
   }
 
   async recommendAnalyze(data: Record<string, unknown>): Promise<Record<string, unknown>> {

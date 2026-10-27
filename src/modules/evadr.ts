@@ -1,4 +1,5 @@
 import type { HttpTransport } from '../_http.js';
+import { JobFailedError, JobTimeoutError } from '../errors.js';
 import type { AnalyzeResult, FetchEvent, FetchResult } from '../models.js';
 
 function parseFetch(raw: Record<string, unknown>, url: string): FetchResult {
@@ -20,42 +21,93 @@ export interface FetchOptions {
   forceBrowser?: boolean;
   useProxy?: boolean;
   sessionArtifactId?: string;
+  /** How often to poll a fetch the API handed off as a job (202). Default 3000 ms. */
+  pollIntervalMs?: number;
+  /** How long to follow a handed-off fetch before throwing JobTimeoutError. Default 15 minutes. */
+  pollTimeoutMs?: number;
 }
 
-export interface FetchAsyncOptions extends FetchOptions {
+export interface FetchAsyncOptions {
+  forceBrowser?: boolean;
+  useProxy?: boolean;
+  sessionArtifactId?: string;
   webhookUrl?: string;
 }
+
+/** The 202 body of `POST …/evadr/fetch` when the fetch continues as a job. */
+interface HandedOff {
+  job_id: string;
+  poll_url: string;
+}
+
+function isHandedOff(raw: Record<string, unknown>): raw is Record<string, unknown> & HandedOff {
+  return typeof raw['job_id'] === 'string' && 'poll_url' in raw;
+}
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 export class EvadrNamespace {
   constructor(private readonly _t: HttpTransport) {}
 
+  /**
+   * Fetch a page. The API answers within about 85 s; a fetch still running
+   * then is handed off as a job (202), which this follows to its result.
+   */
   async fetch(url: string, opts: FetchOptions = {}): Promise<FetchResult> {
     const body: Record<string, unknown> = { url };
     if (opts.forceBrowser) body['force_browser'] = true;
     if (opts.useProxy) body['use_proxy'] = true;
     if (opts.sessionArtifactId) body['session_artifact_id'] = opts.sessionArtifactId;
     const raw = await this._t.post('evadr/fetch', body);
-    return parseFetch(raw, url);
+    if (!isHandedOff(raw)) return parseFetch(raw, url);
+    const result = await this.waitForJob(raw.job_id, {
+      pollIntervalMs: opts.pollIntervalMs ?? 3000,
+      timeoutMs: opts.pollTimeoutMs ?? 15 * 60 * 1000,
+    });
+    return parseFetch(result, url);
   }
 
+  /** Start a fetch as a job; returns the job id (poll with getJob or waitForJob). */
   async fetchAsync(url: string, opts: FetchAsyncOptions = {}): Promise<string> {
-    const body: Record<string, unknown> = { url, async: true };
+    const body: Record<string, unknown> = { url };
     if (opts.forceBrowser) body['force_browser'] = true;
     if (opts.useProxy) body['use_proxy'] = true;
+    if (opts.sessionArtifactId) body['session_artifact_id'] = opts.sessionArtifactId;
     if (opts.webhookUrl) body['webhook_url'] = opts.webhookUrl;
-    const raw = await this._t.post('evadr/fetch', body);
+    const raw = await this._t.post('evadr/fetch/async', body);
     return String(raw['job_id']);
   }
 
-  async *fetchStream(url: string, opts: { forceBrowser?: boolean } = {}): AsyncIterable<FetchEvent> {
-    const body: Record<string, unknown> = { url };
-    if (opts.forceBrowser) body['force_browser'] = true;
-    for await (const data of this._t.stream('evadr/fetch/stream', body)) {
+  /** Poll a fetch job until it completes (its result) or fails (JobFailedError). */
+  async waitForJob(
+    jobId: string,
+    opts: { pollIntervalMs?: number; timeoutMs?: number } = {},
+  ): Promise<Record<string, unknown>> {
+    const interval = opts.pollIntervalMs ?? 3000;
+    const deadline = Date.now() + (opts.timeoutMs ?? 15 * 60 * 1000);
+    for (;;) {
+      const job = await this.getJob(jobId);
+      const status = String(job['status'] ?? '');
+      if (status === 'completed') return (job['result'] as Record<string, unknown> | undefined) ?? {};
+      if (status === 'failed') {
+        throw new JobFailedError(String(job['error'] ?? 'Fetch job failed'), jobId);
+      }
+      if (Date.now() + interval > deadline) {
+        throw new JobTimeoutError(`Fetch job ${jobId} still running`, jobId);
+      }
+      await sleep(interval);
+    }
+  }
+
+  /** Start a fetch as a job and stream its progress events. */
+  async *fetchStream(url: string, opts: FetchAsyncOptions = {}): AsyncIterable<FetchEvent> {
+    const jobId = await this.fetchAsync(url, opts);
+    for await (const data of this.jobEvents(jobId)) {
       yield {
-        type: String(data['type'] ?? ''),
+        type: String(data['event_type'] ?? data['type'] ?? ''),
         tier: data['tier'] != null ? Number(data['tier']) : null,
         vendor: (data['vendor'] as string | undefined) ?? null,
-        metadata: (data['metadata'] as Record<string, unknown> | undefined) ?? {},
+        metadata: (data['metadata'] as Record<string, unknown> | undefined) ?? data,
       };
     }
   }
@@ -78,27 +130,34 @@ export class EvadrNamespace {
     };
   }
 
-  async scan(url: string, opts: { statusCode?: number; headers?: Record<string, string>; bodySnippet?: string } = {}): Promise<Record<string, unknown>> {
-    return this._t.post('evadr/scan', { url, status_code: opts.statusCode ?? 200, headers: opts.headers ?? {}, body_snippet: opts.bodySnippet ?? null });
+  /** Lightweight HTTP fetch and anti-bot analysis of a URL. */
+  async scan(url: string): Promise<Record<string, unknown>> {
+    return this._t.post('evadr/scan', { url });
+  }
+
+  /** The canonical site profile of a URL. */
+  async profile(url: string): Promise<Record<string, unknown>> {
+    return this._t.post('evadr/profile', { url });
   }
 
   async getJob(jobId: string): Promise<Record<string, unknown>> {
     return this._t.get(`evadr/jobs/${jobId}`);
   }
 
-  async getJobEvents(jobId: string): Promise<Record<string, unknown>> {
-    return this._t.get(`evadr/jobs/${jobId}/events`);
+  /** A fetch job's progress events (Server-Sent Events). */
+  jobEvents(jobId: string): AsyncIterable<Record<string, unknown>> {
+    return this._t.streamGet(`evadr/jobs/${jobId}/events`);
   }
 
-  async listVendors(): Promise<Record<string, unknown>> {
+  async listVendors(): Promise<Record<string, unknown>[]> {
     return this._t.get('evadr/vendors');
   }
 
-  async listProfiles(): Promise<Record<string, unknown>> {
+  async listProfiles(): Promise<Record<string, unknown>[]> {
     return this._t.get('evadr/profiles');
   }
 
-  async listProxies(): Promise<Record<string, unknown>> {
+  async listProxies(): Promise<Record<string, unknown>[]> {
     return this._t.get('evadr/proxies');
   }
 
@@ -107,6 +166,6 @@ export class EvadrNamespace {
   }
 
   async deleteProxy(name: string): Promise<void> {
-    await this._t.delete(`evadr/proxies/${name}`);
+    await this._t.delete(`evadr/proxies/${encodeURIComponent(name)}`);
   }
 }

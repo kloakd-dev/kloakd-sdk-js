@@ -57,13 +57,12 @@ describe('kolektr.page', () => {
 });
 
 describe('kolektr.pageAll', () => {
-  it('auto-paginates until hasMore is false', async () => {
-    const p1 = { ...EXTRACTION_RESPONSE, has_more: true, total: 4, records: [{ title: 'Book 1' }, { title: 'Book 2' }] };
-    const p2 = { ...EXTRACTION_RESPONSE, has_more: false, total: 4, records: [{ title: 'Book 3' }, { title: 'Book 4' }] };
-    const client = makeClient(mockFetchSequence([{ body: p1 }, { body: p2 }]));
-    const records = await client.kolektr.pageAll('https://books.toscrape.com');
-    expect(records).toHaveLength(4);
-    expect((records[2] as { title: string }).title).toBe('Book 3');
+  it('returns every record of the one response (the API does not page extractions)', async () => {
+    const p1 = { ...EXTRACTION_RESPONSE, records: [{ title: 'Book 1' }, { title: 'Book 2' }] };
+    const fetch = mockFetchSequence([{ body: p1 }]);
+    const records = await makeClient(fetch).kolektr.pageAll('https://books.toscrape.com');
+    expect(records).toHaveLength(2);
+    expect((fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls).toHaveLength(1);
   });
 });
 
@@ -77,7 +76,7 @@ describe('kolektr.extractHtml', () => {
     const body = parseCallBody((fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls[0]!);
     expect(body['html']).toBe('<html>...</html>');
     expect(body['url']).toBe('https://example.com');
-    expect(body['schema']).toEqual({ title: 'css:h1' });
+    expect(body['schema_spec']).toEqual({ fields: [{ name: 'title', selector: 'css:h1' }] });
   });
 
   it('returns ExtractionResult', async () => {

@@ -56,6 +56,8 @@ export interface PageNode {
 export interface CrawlResult extends Paginated {
   success: boolean;
   crawlId: string;
+  /** queued, crawling, completed, failed or cancelled. */
+  status: string;
   url: string;
   totalPages: number;
   maxDepthReached: number;
@@ -75,68 +77,47 @@ export interface CrawlEvent {
 
 // ── Skanyr ────────────────────────────────────────────────────────────────────
 
-export interface ApiEndpoint {
-  url: string;
-  method: string;
-  apiType: string;
-  confidence: number;
-  parameters: Record<string, unknown>;
-}
-
-export interface DiscoverResult extends Paginated {
-  success: boolean;
-  discoveryId: string;
-  url: string;
-  totalEndpoints: number;
-  endpoints: ApiEndpoint[];
-  artifactId: string | null;
-  error: string | null;
-  readonly ok: boolean;
-}
-
-export interface DiscoverEvent {
-  type: string;
-  endpointUrl: string | null;
-  apiType: string | null;
-  metadata: Record<string, unknown>;
-}
-
 // ── Nexus ─────────────────────────────────────────────────────────────────────
 
 export interface NexusAnalyzeResult {
+  url: string;
   perceptionId: string;
+  reasoningId: string | null;
   strategy: Record<string, unknown>;
   pageType: string;
-  complexityLevel: string;
+  confidence: number;
   artifactId: string | null;
-  durationMs: number;
   error: string | null;
   readonly ok: boolean;
 }
 
 export interface NexusSynthesisResult {
+  url: string;
+  goal: string;
   strategyId: string;
   strategyName: string;
-  generatedCode: string;
-  artifactId: string | null;
+  strategyType: string | null;
+  /** The generated extraction program. */
+  program: string;
+  steps: Record<string, unknown>[];
+  confidence: number;
   synthesisTimeMs: number;
   error: string | null;
   readonly ok: boolean;
 }
 
 export interface NexusVerifyResult {
-  verificationResultId: string;
-  isSafe: boolean;
-  riskScore: number;
+  strategyId: string;
+  verified: boolean;
   safetyScore: number;
   violations: string[];
-  durationMs: number;
   error: string | null;
   readonly ok: boolean;
 }
 
 export interface NexusExecuteResult {
-  executionResultId: string;
+  url: string;
+  strategyId: string;
   success: boolean;
   records: Record<string, unknown>[];
   artifactId: string | null;
@@ -145,9 +126,11 @@ export interface NexusExecuteResult {
   readonly ok: boolean;
 }
 
-export interface NexusKnowledgeResult extends Paginated {
+export interface NexusKnowledgeResult {
+  executionResultId: string;
   learnedConcepts: Record<string, unknown>[];
-  learnedPatterns: Record<string, unknown>[];
+  patterns: Record<string, unknown>[];
+  totalPatterns: number;
   durationMs: number;
   error: string | null;
   readonly ok: boolean;
@@ -189,20 +172,11 @@ export interface ChatEvent {
 export interface SessionResult {
   success: boolean;
   sessionId: string;
+  /** The URL logged into (the request's target). */
   url: string;
   artifactId: string | null;
-  screenshotUrl: string | null;
-  error: string | null;
-  readonly ok: boolean;
-}
-
-export interface FetchyrResult {
-  success: boolean;
-  url: string;
-  statusCode: number;
-  html: string | null;
-  artifactId: string | null;
-  sessionArtifactId: string;
+  targetDomain: string | null;
+  authMethod: string | null;
   error: string | null;
   readonly ok: boolean;
 }
@@ -210,8 +184,10 @@ export interface FetchyrResult {
 export interface WorkflowResult {
   workflowId: string;
   name: string;
+  description: string | null;
+  workflowType: string | null;
   steps: Record<string, unknown>[];
-  url: string | null;
+  isActive: boolean;
   createdAt: string;
   error: string | null;
   readonly ok: boolean;
@@ -223,14 +199,17 @@ export interface WorkflowExecutionResult {
   status: string;
   startedAt: string | null;
   completedAt: string | null;
-  records: Record<string, unknown>[];
+  result: Record<string, unknown> | null;
   error: string | null;
   readonly ok: boolean;
 }
 
 export interface FormDetectionResult {
+  url: string;
+  /** The detected form fields. */
   forms: Record<string, unknown>[];
   totalForms: number;
+  loginFormDetected: boolean;
   error: string | null;
 }
 
@@ -238,21 +217,25 @@ export interface MfaDetectionResult {
   mfaDetected: boolean;
   challengeId: string | null;
   mfaType: string | null;
+  message: string | null;
   error: string | null;
 }
 
-export interface MfaResult {
-  success: boolean;
-  sessionArtifactId: string | null;
-  error: string | null;
+export interface MfaChallenge {
+  id: string;
+  sessionId: string | null;
+  mfaType: string | null;
+  status: string;
+  challengeData: Record<string, unknown>;
+  expiresAt: string | null;
+  createdAt: string | null;
 }
 
-export interface DeduplicationResult {
-  uniqueRecords: Record<string, unknown>[];
-  duplicateCount: number;
-  totalInput: number;
-  error: string | null;
-  readonly ok: boolean;
+export interface DuplicateCheckResult {
+  isDuplicate: boolean;
+  originalUrl: string | null;
+  similarityScore: number | null;
+  matchType: string | null;
 }
 
 // ── Kolektr ───────────────────────────────────────────────────────────────────

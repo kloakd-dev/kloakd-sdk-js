@@ -1,112 +1,150 @@
 import type { HttpTransport } from '../_http.js';
-import type { ApiEndpoint, DiscoverEvent, DiscoverResult } from '../models.js';
 
-function parseEndpoint(e: Record<string, unknown>): ApiEndpoint {
-  return {
-    url: String(e['url'] ?? ''),
-    method: String(e['method'] ?? 'GET'),
-    apiType: String(e['api_type'] ?? 'rest'),
-    confidence: Number(e['confidence'] ?? 0),
-    parameters: (e['parameters'] as Record<string, unknown> | undefined) ?? {},
-  };
+type Json = Record<string, unknown>;
+
+/** Turn defined option values into query parameters. */
+function query(params: Record<string, string | number | boolean | undefined>): Record<string, string> | undefined {
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined) out[key] = String(value);
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
-function parseDiscover(raw: Record<string, unknown>, url: string): DiscoverResult {
-  const endpoints = ((raw['endpoints'] as Record<string, unknown>[] | undefined) ?? []).map(parseEndpoint);
-  const result = {
-    success: Boolean(raw['success']),
-    discoveryId: (raw['discovery_id'] as string | undefined) ?? '',
-    url: (raw['url'] as string | undefined) ?? url,
-    totalEndpoints: Number(raw['total_endpoints'] ?? 0),
-    endpoints,
-    artifactId: (raw['artifact_id'] as string | undefined) ?? null,
-    error: (raw['error'] as string | undefined) ?? null,
-    hasMore: Boolean(raw['has_more']),
-    total: Number(raw['total'] ?? 0),
-  };
-  return { ...result, get ok() { return result.success && result.error === null; } };
-}
-
-export interface DiscoverOptions {
-  siteHierarchyArtifactId?: string;
-  maxRequests?: number;
-  sessionArtifactId?: string;
-  limit?: number;
-  offset?: number;
-}
-
+/**
+ * Skanyr — the site knowledge store: sites built from crawls, their
+ * resources, search, change history, the resource graph and technology
+ * findings. (The 0.2 discovery methods called routes the API no longer has;
+ * page discovery is `webgrph.crawl`, and sessions, reader view and detected
+ * APIs moved to `webgrph`.)
+ */
 export class SkanyrNamespace {
   constructor(private readonly _t: HttpTransport) {}
 
-  async discover(url: string, opts: DiscoverOptions = {}): Promise<DiscoverResult> {
-    const body: Record<string, unknown> = {
-      url,
-      max_requests: opts.maxRequests ?? 200,
-      limit: opts.limit ?? 100,
-      offset: opts.offset ?? 0,
-    };
-    if (opts.siteHierarchyArtifactId) body['site_hierarchy_artifact_id'] = opts.siteHierarchyArtifactId;
-    if (opts.sessionArtifactId) body['session_artifact_id'] = opts.sessionArtifactId;
-    const raw = await this._t.post('skanyr/discover', body);
-    return parseDiscover(raw, url);
+  // ── Sites ────────────────────────────────────────────────────────────
+
+  async listSites(): Promise<Json[]> {
+    return this._t.get<Json[]>('skanyr/sites');
   }
 
-  async discoverAll(url: string, opts: Omit<DiscoverOptions, 'limit' | 'offset'> = {}): Promise<ApiEndpoint[]> {
-    const all: ApiEndpoint[] = [];
-    let offset = 0;
-    while (true) {
-      const result = await this.discover(url, { ...opts, limit: 100, offset });
-      all.push(...result.endpoints);
-      if (!result.hasMore) break;
-      offset += result.endpoints.length;
-    }
-    return all;
+  /** Build (or update) a site from a finished crawl. */
+  async siteFromCrawl(crawlId: string): Promise<Json> {
+    return this._t.post(`skanyr/sites/from-crawl/${crawlId}`, {});
   }
 
-  async *discoverStream(
-    url: string,
-    opts: { siteHierarchyArtifactId?: string; maxRequests?: number } = {},
-  ): AsyncIterable<DiscoverEvent> {
-    const body: Record<string, unknown> = { url, max_requests: opts.maxRequests ?? 200 };
-    if (opts.siteHierarchyArtifactId) body['site_hierarchy_artifact_id'] = opts.siteHierarchyArtifactId;
-    for await (const data of this._t.stream('skanyr/discover/stream', body)) {
-      yield {
-        type: String(data['type'] ?? ''),
-        endpointUrl: (data['endpoint_url'] as string | undefined) ?? null,
-        apiType: (data['api_type'] as string | undefined) ?? null,
-        metadata: (data['metadata'] as Record<string, unknown> | undefined) ?? {},
-      };
-    }
+  async getSite(siteId: string): Promise<Json> {
+    return this._t.get(`skanyr/sites/${siteId}`);
   }
 
-  async getDiscovery(discoveryId: string): Promise<Record<string, unknown>> { return this._t.get(`skanyr/discover/${discoveryId}`); }
-  async getDiscoveryEvents(discoveryId: string): Promise<Record<string, unknown>> { return this._t.get(`skanyr/discover/${discoveryId}/events`); }
-
-  async analyzeBundle(url: string): Promise<Record<string, unknown>> { return this._t.post('skanyr/analyze-bundle', { url }); }
-  async discoverPageLive(url: string): Promise<Record<string, unknown>> { return this._t.post('skanyr/discover-page/live', { url }); }
-  async detectedApis(pageUrl: string): Promise<Record<string, unknown>> { return this._t.get('skanyr/detected-apis', { page_url: pageUrl }); }
-  async hierarchy(url: string): Promise<Record<string, unknown>> { return this._t.post('skanyr/hierarchy', { url }); }
-  async expandNode(nodeId: string): Promise<Record<string, unknown>> { return this._t.post('skanyr/expand-node', { node_id: nodeId }); }
-  async readerView(url: string): Promise<Record<string, unknown>> { return this._t.post('skanyr/reader-view', { url }); }
-
-  async retry(discoveryId: string, overrides?: Record<string, unknown>): Promise<Record<string, unknown>> {
-    return this._t.post('skanyr/retry', { discovery_id: discoveryId, ...overrides });
+  async updateSite(siteId: string, update: { policy?: Json }): Promise<Json> {
+    return this._t.patch(`skanyr/sites/${siteId}`, update.policy !== undefined ? { policy: update.policy } : {});
   }
 
-  async health(): Promise<Record<string, unknown>> { return this._t.get('skanyr/health'); }
-
-  async listSessions(): Promise<Record<string, unknown>> { return this._t.get('skanyr/sessions'); }
-  async saveSession(config: Record<string, unknown>): Promise<Record<string, unknown>> { return this._t.post('skanyr/sessions', config); }
-  async getSession(sessionId: string): Promise<Record<string, unknown>> { return this._t.get(`skanyr/sessions/${sessionId}`); }
-  async deleteSession(sessionId: string): Promise<void> { await this._t.delete(`skanyr/sessions/${sessionId}`); }
-  async endSession(sessionId: string): Promise<Record<string, unknown>> { return this._t.post(`skanyr/sessions/${sessionId}/end`, {}); }
-  async updateSessionJob(sessionId: string, jobId: string): Promise<Record<string, unknown>> { return this._t.patch(`skanyr/sessions/${sessionId}/job`, { job_id: jobId }); }
-
-  async getApiMap(artifactId: string): Promise<Record<string, unknown>> {
-    return this._t.get(`skanyr/api-map/${artifactId}`);
+  async deleteSite(siteId: string): Promise<void> {
+    await this._t.delete(`skanyr/sites/${siteId}`);
   }
 
-  async getJob(jobId: string): Promise<Record<string, unknown>> {
-    return this._t.get(`skanyr/jobs/${jobId}`);
+  /** Re-fetch a site's changed content (all of it, or the given URLs). */
+  async sync(siteId: string, opts: { urls?: string[]; policy?: string } = {}): Promise<Json> {
+    const body: Json = { site_id: siteId };
+    if (opts.urls) body['urls'] = opts.urls;
+    if (opts.policy) body['policy'] = opts.policy;
+    return this._t.post('skanyr/sync', body);
+  }
+
+  async exportSite(siteId: string, opts: { resourceIds?: string[]; maxBytes?: number } = {}): Promise<Json> {
+    const body: Json = {};
+    if (opts.resourceIds) body['resource_ids'] = opts.resourceIds;
+    if (opts.maxBytes !== undefined) body['max_bytes'] = opts.maxBytes;
+    return this._t.post(`skanyr/sites/${siteId}/export`, body);
+  }
+
+  async getSiteApis(siteId: string, opts: { limit?: number; offset?: number } = {}): Promise<Json> {
+    return this._t.get(`skanyr/sites/${siteId}/apis`, query(opts));
+  }
+
+  async getSiteResources(siteId: string, opts: { resourceType?: string; limit?: number; offset?: number } = {}): Promise<Json> {
+    return this._t.get(`skanyr/sites/${siteId}/resources`, query({ resource_type: opts.resourceType, limit: opts.limit, offset: opts.offset }));
+  }
+
+  async searchSite(siteId: string, q: string, opts: { limit?: number; offset?: number; mimeType?: string } = {}): Promise<Json> {
+    return this._t.get(`skanyr/sites/${siteId}/search`, query({ q, limit: opts.limit, offset: opts.offset, mime_type: opts.mimeType }));
+  }
+
+  async getFindings(siteId: string, opts: { findingKind?: string; limit?: number; offset?: number } = {}): Promise<Json> {
+    return this._t.get(`skanyr/sites/${siteId}/findings`, query({ finding_kind: opts.findingKind, limit: opts.limit, offset: opts.offset }));
+  }
+
+  async getTechnologies(siteId: string): Promise<Json> {
+    return this._t.get(`skanyr/sites/${siteId}/technologies`);
+  }
+
+  async getTechnologyEvidence(siteId: string, subject: string, opts: { detector?: string; limit?: number; offset?: number } = {}): Promise<Json> {
+    return this._t.get(`skanyr/sites/${siteId}/technology-evidence`, query({ subject, detector: opts.detector, limit: opts.limit, offset: opts.offset }));
+  }
+
+  // ── History ──────────────────────────────────────────────────────────
+
+  async listSnapshots(siteId: string, opts: { limit?: number } = {}): Promise<Json> {
+    return this._t.get(`skanyr/sites/${siteId}/snapshots`, query(opts));
+  }
+
+  async getTimeline(siteId: string, opts: { limit?: number } = {}): Promise<Json> {
+    return this._t.get(`skanyr/sites/${siteId}/timeline`, query(opts));
+  }
+
+  async getTimelineSnapshot(siteId: string, snapshotId: string): Promise<Json> {
+    return this._t.get(`skanyr/sites/${siteId}/timeline/${snapshotId}`);
+  }
+
+  async diff(siteId: string, opts: { snapshotA?: string; snapshotB?: string } = {}): Promise<Json> {
+    return this._t.get(`skanyr/sites/${siteId}/diff`, query({ snapshot_a: opts.snapshotA, snapshot_b: opts.snapshotB }));
+  }
+
+  // ── Graph ────────────────────────────────────────────────────────────
+
+  async getGraph(siteId: string, opts: { resourceType?: string; maxDepth?: number; edgeKind?: string; limit?: number } = {}): Promise<Json> {
+    return this._t.get(`skanyr/sites/${siteId}/graph`, query({ resource_type: opts.resourceType, max_depth: opts.maxDepth, edge_kind: opts.edgeKind, limit: opts.limit }));
+  }
+
+  async getGraphStats(siteId: string): Promise<Json> {
+    return this._t.get(`skanyr/sites/${siteId}/graph/stats`);
+  }
+
+  async getSubgraph(siteId: string, resourceId: string, opts: { hops?: number } = {}): Promise<Json> {
+    return this._t.get(`skanyr/sites/${siteId}/graph/subgraph/${resourceId}`, query(opts));
+  }
+
+  // ── Resources, search, extraction ────────────────────────────────────
+
+  async listResources(opts: { siteId?: string; resourceType?: string; limit?: number; offset?: number } = {}): Promise<Json> {
+    return this._t.get('skanyr/resources', query({ site_id: opts.siteId, resource_type: opts.resourceType, limit: opts.limit, offset: opts.offset }));
+  }
+
+  async getResource(resourceId: string): Promise<Json> {
+    return this._t.get(`skanyr/resources/${resourceId}`);
+  }
+
+  /** Full-text search across the organisation's stored content. */
+  async search(q: string, opts: { siteId?: string; limit?: number; offset?: number; mimeType?: string } = {}): Promise<Json> {
+    const body: Json = { query: q };
+    if (opts.siteId) body['site_id'] = opts.siteId;
+    if (opts.limit !== undefined) body['limit'] = opts.limit;
+    if (opts.offset !== undefined) body['offset'] = opts.offset;
+    if (opts.mimeType) body['mime_type'] = opts.mimeType;
+    return this._t.post('skanyr/search', body);
+  }
+
+  /** Extract text and structure from stored content (by its content hash). */
+  async extract(contentHash: string, mimeType: string, metadata: Json = {}): Promise<Json> {
+    return this._t.post('skanyr/extract', { content_hash: contentHash, mime_type: mimeType, metadata });
+  }
+
+  async getExtractionText(contentHash: string): Promise<Json> {
+    return this._t.get(`skanyr/extractions/${contentHash}/text`);
+  }
+
+  async getExtractionStructure(contentHash: string): Promise<Json> {
+    return this._t.get(`skanyr/extractions/${contentHash}/structure`);
   }
 }

@@ -18,26 +18,56 @@ function parseExtraction(raw: Record<string, unknown>, url: string): ExtractionR
   return { ...result, get ok() { return result.success && result.error === null; } };
 }
 
+/** A field to extract: a name, and where to find it on the page. */
+export interface FieldSpec {
+  name: string;
+  selector?: string;
+  attribute?: string;
+  type?: string;
+}
+
+/** The API's extraction schema. */
+export interface SchemaSpec {
+  fields: FieldSpec[];
+  pagination?: boolean;
+  maxPages?: number;
+  outputFormat?: string;
+}
+
+/**
+ * The extraction schema as the API takes it (`schema_spec`). A plain
+ * `{ fieldName: cssSelector }` map is accepted as shorthand.
+ */
+export function toSchemaSpec(schema: SchemaSpec | Record<string, string>): Record<string, unknown> {
+  if (Array.isArray((schema as SchemaSpec).fields)) {
+    const s = schema as SchemaSpec;
+    const spec: Record<string, unknown> = { fields: s.fields };
+    if (s.pagination !== undefined) spec['pagination'] = s.pagination;
+    if (s.maxPages !== undefined) spec['max_pages'] = s.maxPages;
+    if (s.outputFormat !== undefined) spec['output_format'] = s.outputFormat;
+    return spec;
+  }
+  return {
+    fields: Object.entries(schema as Record<string, string>).map(([name, selector]) => ({ name, selector })),
+  };
+}
+
 export interface PageOptions {
-  schema?: Record<string, string>;
+  schema?: SchemaSpec | Record<string, string>;
+  level?: string;
   fetchArtifactId?: string;
   sessionArtifactId?: string;
   apiMapArtifactId?: string;
   options?: Record<string, unknown>;
-  limit?: number;
-  offset?: number;
 }
 
 export class KolektrNamespace {
   constructor(private readonly _t: HttpTransport) {}
 
   async page(url: string, opts: PageOptions = {}): Promise<ExtractionResult> {
-    const body: Record<string, unknown> = {
-      url,
-      limit: opts.limit ?? 100,
-      offset: opts.offset ?? 0,
-    };
-    if (opts.schema) body['schema'] = opts.schema;
+    const body: Record<string, unknown> = { url };
+    if (opts.schema) body['schema_spec'] = toSchemaSpec(opts.schema);
+    if (opts.level) body['level'] = opts.level;
     if (opts.fetchArtifactId) body['fetch_artifact_id'] = opts.fetchArtifactId;
     if (opts.sessionArtifactId) body['session_artifact_id'] = opts.sessionArtifactId;
     if (opts.apiMapArtifactId) body['api_map_artifact_id'] = opts.apiMapArtifactId;
@@ -46,25 +76,18 @@ export class KolektrNamespace {
     return parseExtraction(raw, url);
   }
 
-  async pageAll(url: string, opts: Omit<PageOptions, 'limit' | 'offset'> = {}): Promise<Record<string, unknown>[]> {
-    const all: Record<string, unknown>[] = [];
-    let offset = 0;
-    while (true) {
-      const result = await this.page(url, { ...opts, limit: 100, offset });
-      all.push(...result.records);
-      if (!result.hasMore) break;
-      offset += result.records.length;
-    }
-    return all;
+  /** All records of a page's extraction (the API returns them in one response). */
+  async pageAll(url: string, opts: PageOptions = {}): Promise<Record<string, unknown>[]> {
+    return (await this.page(url, opts)).records;
   }
 
   async extractHtml(
     html: string,
     url: string,
-    opts: { schema?: Record<string, string> } = {},
+    opts: { schema?: SchemaSpec | Record<string, string> } = {},
   ): Promise<ExtractionResult> {
     const body: Record<string, unknown> = { html, url };
-    if (opts.schema) body['schema'] = opts.schema;
+    if (opts.schema) body['schema_spec'] = toSchemaSpec(opts.schema);
     const raw = await this._t.post('kolektr/extract/html', body);
     return parseExtraction(raw, url);
   }

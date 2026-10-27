@@ -1,96 +1,77 @@
-import { makeClient, mockFetch, mockFetchSequence, mockSseFetch, parseCallBody, callUrl } from './helpers.js';
+import { JobFailedError } from '../src/errors.js';
+import { callUrl, makeClient, mockFetch, mockFetchSequence, mockSseFetch, ORG_PREFIX, parseCallBody } from './helpers.js';
 
-const PAGE_NODE = { url: 'https://example.com', depth: 0, title: 'Home', status_code: 200, children: [] };
-const CRAWL_RESPONSE = {
-  success: true,
-  crawl_id: 'crawl-001',
-  url: 'https://example.com',
-  total_pages: 1,
-  max_depth_reached: 0,
-  pages: [PAGE_NODE],
-  artifact_id: 'art-hier-001',
-  error: null,
-  has_more: false,
-  total: 1,
-};
+type Calls = { mock: { calls: unknown[][] } };
+const NODE = { id: 'n1', url: 'https://example.com', depth: 0, category: 'page', children_urls: ['https://example.com/a'], metadata: { title: 'Home' } };
 
 describe('webgrph.crawl', () => {
-  it('returns CrawlResult with PageNodes', async () => {
-    const client = makeClient(mockFetch(CRAWL_RESPONSE));
-    const result = await client.webgrph.crawl('https://example.com');
-    expect(result.success).toBe(true);
-    expect(result.crawlId).toBe('crawl-001');
-    expect(result.artifactId).toBe('art-hier-001');
-    expect(result.pages).toHaveLength(1);
-    expect(result.pages[0]!.url).toBe('https://example.com');
-    expect(result.pages[0]!.title).toBe('Home');
+  it('starts the crawl, waits for it, and loads every page', async () => {
+    const fetch = mockFetchSequence([
+      { body: { success: true, crawl_id: 'crawl-1', url: 'https://example.com', total_pages: 0, max_depth_reached: 0 }, status: 202 },
+      { body: { crawl_id: 'crawl-1', status: 'crawling', organization_id: 'o' } },
+      { body: { crawl_id: 'crawl-1', status: 'completed', organization_id: 'o', total_pages: 2, artifact_id: 'art-1' } },
+      { body: { crawl_id: 'crawl-1', nodes: [NODE], next_cursor: 'cur-2', total: 2 } },
+      { body: { crawl_id: 'crawl-1', nodes: [{ ...NODE, id: 'n2', url: 'https://example.com/a', depth: 1 }], next_cursor: null, total: 2 } },
+    ]);
+    const client = makeClient(fetch);
+    const result = await client.webgrph.crawl('https://example.com', { maxDepth: 2, pollIntervalMs: 1 });
+
     expect(result.ok).toBe(true);
-    expect(result.hasMore).toBe(false);
+    expect(result.status).toBe('completed');
+    expect(result.crawlId).toBe('crawl-1');
+    expect(result.artifactId).toBe('art-1');
+    expect(result.pages.map((p) => p.url)).toEqual(['https://example.com', 'https://example.com/a']);
+    expect(result.pages[0]!.title).toBe('Home');
+    expect(result.pages[0]!.children).toEqual(['https://example.com/a']);
+    const calls = (fetch as unknown as Calls).mock.calls;
+    expect(parseCallBody(calls[0]!)['max_depth']).toBe(2);
+    expect(callUrl(calls[4]!)).toContain(`${ORG_PREFIX}/webgrph/crawl/crawl-1/pages?limit=500&cursor=cur-2`);
   });
 
-  it('passes maxDepth and maxPages', async () => {
-    const fetch = mockFetch(CRAWL_RESPONSE);
-    const client = makeClient(fetch);
-    await client.webgrph.crawl('https://example.com', { maxDepth: 5, maxPages: 500 });
-    const body = parseCallBody((fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls[0]!);
-    expect(body['max_depth']).toBe(5);
-    expect(body['max_pages']).toBe(500);
+  it('a failed crawl throws JobFailedError', async () => {
+    const fetch = mockFetchSequence([
+      { body: { crawl_id: 'crawl-2' }, status: 202 },
+      { body: { crawl_id: 'crawl-2', status: 'failed', error: 'dispatch failed' } },
+    ]);
+    await expect(makeClient(fetch).webgrph.crawl('https://example.com', { pollIntervalMs: 1 })).rejects.toBeInstanceOf(JobFailedError);
   });
 
-  it('passes sessionArtifactId', async () => {
-    const fetch = mockFetch(CRAWL_RESPONSE);
-    const client = makeClient(fetch);
-    await client.webgrph.crawl('https://example.com', { sessionArtifactId: 'sess-001' });
-    const body = parseCallBody((fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls[0]!);
-    expect(body['session_artifact_id']).toBe('sess-001');
-  });
-});
-
-describe('webgrph.crawlAll', () => {
-  it('auto-paginates and returns all pages', async () => {
-    const p1 = { ...CRAWL_RESPONSE, has_more: true, total: 2, pages: [PAGE_NODE] };
-    const p2 = { ...CRAWL_RESPONSE, has_more: false, total: 2, pages: [{ ...PAGE_NODE, url: 'https://example.com/about' }] };
-    const client = makeClient(mockFetchSequence([{ body: p1 }, { body: p2 }]));
-    const pages = await client.webgrph.crawlAll('https://example.com');
-    expect(pages).toHaveLength(2);
-    expect(pages[1]!.url).toBe('https://example.com/about');
-  });
-});
-
-describe('webgrph.getHierarchy', () => {
-  it('calls correct path', async () => {
-    const fetch = mockFetch({ artifact_id: 'art-001', nodes: [] });
-    const client = makeClient(fetch);
-    await client.webgrph.getHierarchy('art-001');
-    const url = callUrl((fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls[0]!);
-    expect(url).toContain('webgrph/hierarchy/art-001');
-  });
-});
-
-describe('webgrph.getJob', () => {
-  it('calls correct path', async () => {
-    const fetch = mockFetch({ job_id: 'job-001', status: 'completed' });
-    const client = makeClient(fetch);
-    await client.webgrph.getJob('job-001');
-    const url = callUrl((fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls[0]!);
-    expect(url).toContain('webgrph/jobs/job-001');
+  it('wait: false returns the crawl id at once', async () => {
+    const fetch = mockFetch({ crawl_id: 'crawl-3' }, 202);
+    const result = await makeClient(fetch).webgrph.crawl('https://example.com', { wait: false });
+    expect(result.crawlId).toBe('crawl-3');
+    expect(result.status).toBe('queued');
+    expect((fetch as unknown as Calls).mock.calls).toHaveLength(1);
   });
 });
 
 describe('webgrph.crawlStream', () => {
-  it('yields CrawlEvent objects', async () => {
-    const client = makeClient(mockSseFetch([
-      { type: 'page_found', url: 'https://example.com', depth: 0, pages_found: 1, metadata: {} },
-      { type: 'done', url: null, depth: null, pages_found: 1, metadata: {} },
-    ]));
-    const events = [];
-    for await (const event of client.webgrph.crawlStream('https://example.com')) {
-      events.push(event);
-    }
-    expect(events).toHaveLength(2);
-    expect(events[0]!.type).toBe('page_found');
-    expect(events[0]!.url).toBe('https://example.com');
-    expect(events[0]!.pagesFound).toBe(1);
-    expect(events[1]!.type).toBe('done');
+  it('starts a crawl and streams its events', async () => {
+    const start = mockFetch({ crawl_id: 'crawl-4' }, 202);
+    const events = mockSseFetch([{ event_type: 'PAGE_FOUND', url: 'https://example.com/a', depth: 1 }]);
+    const fetch = jest.fn((url: string, init: RequestInit) => (init.method === 'POST' ? start(url, init) : events(url, init)));
+    const out = [];
+    for await (const e of makeClient(fetch).webgrph.crawlStream('https://example.com')) out.push(e);
+    expect(out).toHaveLength(1);
+    expect(out[0]!.type).toBe('PAGE_FOUND');
+    expect(callUrl(fetch.mock.calls[1]!)).toContain('/webgrph/crawl/crawl-4/events');
+  });
+});
+
+describe('webgrph sessions and reader view (moved from skanyr)', () => {
+  it('reader view posts to webgrph/reader-view', async () => {
+    const fetch = mockFetch({ title: 'T' });
+    await makeClient(fetch).webgrph.readerView('https://example.com/a', { crawlId: 'c1' });
+    const call = (fetch as unknown as Calls).mock.calls[0]!;
+    expect(callUrl(call)).toBe(`https://api.kloakd.dev${ORG_PREFIX}/webgrph/reader-view`);
+    expect(parseCallBody(call)).toEqual({ url: 'https://example.com/a', crawl_id: 'c1' });
+  });
+
+  it('updateSessionJob sends the job id as a query parameter', async () => {
+    const fetch = mockFetch({ id: 's1' });
+    await makeClient(fetch).webgrph.updateSessionJob('s1', 'job-9');
+    const call = (fetch as unknown as Calls).mock.calls[0]!;
+    expect(callUrl(call)).toContain('/webgrph/sessions/s1/job?job_id=job-9');
+    expect((call[1] as RequestInit).method).toBe('PATCH');
   });
 });

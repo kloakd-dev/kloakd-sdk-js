@@ -1,119 +1,43 @@
 import { makeClient, mockFetch, parseCallBody } from './helpers.js';
 
-describe('nexus.analyze', () => {
-  it('returns NexusAnalyzeResult', async () => {
-    const client = makeClient(mockFetch({
-      perception_id: 'perc-001',
-      strategy: { name: 'css_scrape' },
-      page_type: 'listing',
-      complexity_level: 'low',
-      artifact_id: 'art-001',
-      duration_ms: 120,
-      error: null,
-    }));
-    const result = await client.nexus.analyze('https://example.com');
-    expect(result.perceptionId).toBe('perc-001');
-    expect(result.pageType).toBe('listing');
-    expect(result.complexityLevel).toBe('low');
-    expect(result.artifactId).toBe('art-001');
-    expect(result.durationMs).toBe(120);
-    expect(result.ok).toBe(true);
+type Calls = { mock: { calls: unknown[][] } };
+const first = (f: unknown) => (f as Calls).mock.calls[0]!;
+
+describe('nexus', () => {
+  it('analyze sends the url and html and reads the analysis', async () => {
+    const fetch = mockFetch({ url: 'https://e.com', page_type: 'listing', confidence: 0.9, strategy: { s: 1 }, perception_id: 'p1', artifact: { artifact_id: 'a1' } });
+    const r = await makeClient(fetch).nexus.analyze('https://e.com', '<html></html>', { constraints: { max_fields: 3 } });
+    expect(parseCallBody(first(fetch))).toEqual({ url: 'https://e.com', html: '<html></html>', constraints: { max_fields: 3 } });
+    expect([r.pageType, r.confidence, r.perceptionId, r.artifactId, r.ok]).toEqual(['listing', 0.9, 'p1', 'a1', true]);
   });
 
-  it('passes html and constraints', async () => {
-    const fetch = mockFetch({ perception_id: 'p', strategy: {}, page_type: 'detail', complexity_level: 'medium', artifact_id: null, duration_ms: 0, error: null });
-    const client = makeClient(fetch);
-    await client.nexus.analyze('https://example.com', { html: '<html/>', constraints: { max_fields: 5 } });
-    const body = parseCallBody((fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls[0]!);
-    expect(body['html']).toBe('<html/>');
-    expect(body['constraints']).toEqual({ max_fields: 5 });
-  });
-});
-
-describe('nexus.synthesize', () => {
-  it('returns NexusSynthesisResult', async () => {
-    const client = makeClient(mockFetch({
-      strategy_id: 'strat-001',
-      strategy_name: 'ProductListingCSSStrategy',
-      generated_code: 'document.querySelectorAll(...)',
-      artifact_id: 'art-002',
-      synthesis_time_ms: 340,
-      error: null,
-    }));
-    const result = await client.nexus.synthesize('perc-001');
-    expect(result.strategyId).toBe('strat-001');
-    expect(result.strategyName).toBe('ProductListingCSSStrategy');
-    expect(result.synthesisTimeMs).toBe(340);
-    expect(result.ok).toBe(true);
-  });
-});
-
-describe('nexus.verify', () => {
-  it('returns NexusVerifyResult', async () => {
-    const client = makeClient(mockFetch({
-      verification_result_id: 'ver-001',
-      is_safe: true,
-      risk_score: 0.05,
-      safety_score: 0.95,
-      violations: [],
-      duration_ms: 80,
-      error: null,
-    }));
-    const result = await client.nexus.verify('strat-001');
-    expect(result.verificationResultId).toBe('ver-001');
-    expect(result.isSafe).toBe(true);
-    expect(result.riskScore).toBe(0.05);
-    expect(result.violations).toEqual([]);
-    expect(result.ok).toBe(true);
+  it('synthesize sends url, html and goal', async () => {
+    const fetch = mockFetch({ url: 'u', goal: 'g', program: 'code', strategy_id: 's1', strategy_name: 'n', synthesis_time_ms: 12 });
+    const r = await makeClient(fetch).nexus.synthesize('u', '<html/>', 'g');
+    expect(parseCallBody(first(fetch))).toEqual({ url: 'u', html: '<html/>', goal: 'g' });
+    expect([r.program, r.strategyId, r.synthesisTimeMs]).toEqual(['code', 's1', 12]);
   });
 
-  it('ok is false when isSafe is false', async () => {
-    const client = makeClient(mockFetch({
-      verification_result_id: 'ver-002',
-      is_safe: false,
-      risk_score: 0.9,
-      safety_score: 0.1,
-      violations: ['rate_limit_risk'],
-      duration_ms: 50,
-      error: null,
-    }));
-    const result = await client.nexus.verify('strat-002');
-    expect(result.ok).toBe(false);
+  it('verify reads verified and the safety score', async () => {
+    const r = await makeClient(mockFetch({ strategy_id: 's1', verified: true, violations: [], safety_score: 0.97 })).nexus.verify('s1');
+    expect([r.verified, r.safetyScore, r.ok]).toEqual([true, 0.97, true]);
   });
-});
 
-describe('nexus.execute', () => {
-  it('returns NexusExecuteResult', async () => {
-    const client = makeClient(mockFetch({
-      execution_result_id: 'exec-001',
-      success: true,
-      data: [{ title: 'Product A', price: '9.99' }],
-      artifact_id: 'art-003',
-      duration_ms: 2100,
-      error: null,
-    }));
-    const result = await client.nexus.execute('strat-001', 'https://example.com');
-    expect(result.executionResultId).toBe('exec-001');
-    expect(result.success).toBe(true);
-    expect(result.records).toHaveLength(1);
-    expect(result.ok).toBe(true);
+  it('execute reads records and error_message', async () => {
+    const r = await makeClient(mockFetch({ url: 'u', strategy_id: 's1', records: [{ a: 1 }], success: false, error_message: 'timeout' })).nexus.execute('s1', 'u');
+    expect(r.records).toEqual([{ a: 1 }]);
+    expect(r.error).toBe('timeout');
+    expect(r.ok).toBe(false);
   });
-});
 
-describe('nexus.knowledge', () => {
-  it('returns NexusKnowledgeResult with pagination', async () => {
-    const client = makeClient(mockFetch({
-      learned_concepts: [{ name: 'product_grid' }],
-      learned_patterns: [{ selector: 'div.product' }],
-      duration_ms: 50,
-      error: null,
-      has_more: false,
-      total: 1,
-    }));
-    const result = await client.nexus.knowledge('exec-001');
-    expect(result.learnedConcepts).toHaveLength(1);
-    expect(result.learnedPatterns).toHaveLength(1);
-    expect(result.hasMore).toBe(false);
-    expect(result.ok).toBe(true);
+  it('knowledge reads patterns', async () => {
+    const r = await makeClient(mockFetch({ execution_result_id: 'e1', learned_concepts: [], patterns: [{ p: 1 }], total_patterns: 1 })).nexus.knowledge('e1');
+    expect([r.patterns.length, r.totalPatterns]).toEqual([1, 1]);
+  });
+
+  it('reason sends query_type', async () => {
+    const fetch = mockFetch({});
+    await makeClient(fetch).nexus.reason('page_type', { url: 'u' });
+    expect(parseCallBody(first(fetch))).toEqual({ query_type: 'page_type', parameters: { url: 'u' } });
   });
 });
