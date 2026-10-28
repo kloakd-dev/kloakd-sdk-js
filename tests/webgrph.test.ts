@@ -25,6 +25,7 @@ describe('webgrph.crawl', () => {
     expect(result.pages[0]!.children).toEqual(['https://example.com/a']);
     const calls = (fetch as unknown as Calls).mock.calls;
     expect(parseCallBody(calls[0]!)['max_depth']).toBe(2);
+    expect('max_pages' in parseCallBody(calls[0]!)).toBe(false);
     expect(callUrl(calls[4]!)).toContain(`${ORG_PREFIX}/webgrph/crawl/crawl-1/pages?limit=500&cursor=cur-2`);
   });
 
@@ -48,13 +49,34 @@ describe('webgrph.crawl', () => {
 describe('webgrph.crawlStream', () => {
   it('starts a crawl and streams its events', async () => {
     const start = mockFetch({ crawl_id: 'crawl-4' }, 202);
-    const events = mockSseFetch([{ event_type: 'PAGE_FOUND', url: 'https://example.com/a', depth: 1 }]);
+    const events = mockSseFetch([{ pipeline_id: 'crawl-4', event_type: 'pipeline_step', stage_id: 'bfs', status: 'running',
+      message: 'Crawling', sub_status: 'Discovered 15/500 pages', progress_pct: 3, metadata: {}, error: null, sequence: 7 }]);
     const fetch = jest.fn((url: string, init: RequestInit) => (init.method === 'POST' ? start(url, init) : events(url, init)));
     const out = [];
     for await (const e of makeClient(fetch).webgrph.crawlStream('https://example.com')) out.push(e);
     expect(out).toHaveLength(1);
-    expect(out[0]!.type).toBe('PAGE_FOUND');
+    expect(out[0]).toEqual({ eventType: 'pipeline_step', stageId: 'bfs', status: 'running', message: 'Crawling',
+      progressPct: 3, metadata: {}, error: null, sequence: 7, crawlId: 'crawl-4' });
     expect(callUrl(fetch.mock.calls[1]!)).toContain('/webgrph/crawl/crawl-4/events');
+  });
+});
+
+describe('webgrph.startCrawl', () => {
+  it('sends max_depth and max_pages only when set, so the API applies the tier default', async () => {
+    const fetch = mockFetch({ crawl_id: 'c' }, 202);
+    await makeClient(fetch).webgrph.startCrawl('https://example.com');
+    expect(parseCallBody((fetch as unknown as Calls).mock.calls[0]!)).toEqual({ url: 'https://example.com', include_external_links: false });
+  });
+});
+
+describe('webgrph.listSessions', () => {
+  it('always sends active_only', async () => {
+    const f1 = mockFetch([] as unknown as Record<string, unknown>);
+    await makeClient(f1).webgrph.listSessions();
+    expect(callUrl((f1 as unknown as Calls).mock.calls[0]!)).toContain('/webgrph/sessions?active_only=true');
+    const f2 = mockFetch([] as unknown as Record<string, unknown>);
+    await makeClient(f2).webgrph.listSessions({ activeOnly: false });
+    expect(callUrl((f2 as unknown as Calls).mock.calls[0]!)).toContain('/webgrph/sessions?active_only=false');
   });
 });
 

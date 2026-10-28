@@ -14,6 +14,8 @@ export {
   ApiError,
   AuthenticationError,
   BillingUnavailableError,
+  ConcurrencyLimitError,
+  ForbiddenError,
   JobFailedError,
   JobTimeoutError,
   KloakdError,
@@ -24,9 +26,10 @@ export {
   UpstreamError,
 } from './errors.js';
 
-export { SDK_VERSION } from './_http.js';
+export { SDK_VERSION, USER_AGENT } from './_http.js';
 export { toSchemaSpec } from './modules/kolektr.js';
-export type { FieldSpec, SchemaSpec, PageOptions } from './modules/kolektr.js';
+export type { ExtractSchema, FieldSpec, SchemaSpec, PageOptions } from './modules/kolektr.js';
+export type { SiteDependency } from './modules/fetchyr.js';
 export type { FetchOptions, FetchAsyncOptions } from './modules/evadr.js';
 export type { HandoffOptions } from './_handoff.js';
 export type { CrawlOptions } from './modules/webgrph.js';
@@ -53,6 +56,7 @@ export type {
   NexusVerifyResult,
   PageNode,
   ParseResult,
+  PipelineEvent,
   SessionResult,
   SiteCrawlResult,
   WorkflowExecutionResult,

@@ -25,15 +25,45 @@ export interface FetchResult {
   antiBotBypassed: boolean;
   artifactId: string | null;
   error: string | null;
+  /** True when the API found a login page at the URL; `html` is then null. */
+  authRequired: boolean;
+  /** The auth-chain discovery id when `authRequired` (see `fetchyr.getAuthChainStatus`). */
+  discoveryId: string | null;
   /** True if success is true and error is null. */
   readonly ok: boolean;
 }
 
-export interface FetchEvent {
-  type: string;
-  tier: number | null;
-  vendor: string | null;
+/**
+ * A pipeline progress event (`core/pipeline/models.py` PipelineEvent), as
+ * the API streams for crawls (`webgrph/crawl/{id}/events`) and fetch jobs.
+ */
+export interface PipelineEvent {
+  /** pipeline_start, stage_start, stage_progress, pipeline_step, pipeline_complete, pipeline_error, … */
+  eventType: string;
+  stageId: string | null;
+  status: string | null;
+  message: string | null;
+  progressPct: number | null;
   metadata: Record<string, unknown>;
+  /** The structured pipeline error (`error_code`, `user_message`, …), or null. */
+  error: Record<string, unknown> | null;
+  sequence: number | null;
+}
+
+/**
+ * A fetch job event (`evadr/jobs/{id}/events`). The API streams pipeline
+ * events when it has them (`type` is then their `event_type`); otherwise it
+ * polls the job and sends `{type: STATUS|COMPLETE|FAILED|ERROR, status?,
+ * tier_used?, artifact_id?, error?}`.
+ */
+export interface FetchEvent extends Omit<PipelineEvent, 'eventType' | 'error'> {
+  type: string;
+  /** COMPLETE: the tier that fetched the page. */
+  tierUsed: number | null;
+  /** COMPLETE: the fetched content's artifact id. */
+  artifactId: string | null;
+  /** FAILED/ERROR: the error string; a pipeline event's error object. */
+  error: string | Record<string, unknown> | null;
 }
 
 export interface AnalyzeResult {
@@ -67,12 +97,9 @@ export interface CrawlResult extends Paginated {
   readonly ok: boolean;
 }
 
-export interface CrawlEvent {
-  type: string;
-  url: string | null;
-  depth: number | null;
-  pagesFound: number | null;
-  metadata: Record<string, unknown>;
+/** A crawl progress event: a pipeline event with the crawl's id. */
+export interface CrawlEvent extends PipelineEvent {
+  crawlId: string;
 }
 
 // ── Skanyr ────────────────────────────────────────────────────────────────────
@@ -153,20 +180,43 @@ export interface ParseResult {
   readonly ok: boolean;
 }
 
+/**
+ * One chat turn, collected from the API's SSE events
+ * (`application/services/chat_orchestrator.py` ChatEvent).
+ */
 export interface ChatTurn {
   sessionId: string;
-  intent: string;
-  confidence: number;
-  tier: number;
+  /** The `content` of the `text` and `clarification` events, joined by newlines. */
   response: string;
-  entities: Record<string, unknown>;
-  requiresAction: boolean;
+  /** `data.intent` of the last `interpretation` event; null when the API gave none (it usually does not). */
+  intent: string | null;
+  /** `data` of the last `interpretation` event (url, entity, fields, summary, …), or null. */
+  interpretation: Record<string, unknown> | null;
+  /** The `content` of the last `clarification` event, or null. */
   clarificationNeeded: string | null;
+  /** `data` of each `results` event (items, count, url, job_id, …). */
+  results: Record<string, unknown>[];
+  /** The `content` of each `error` event. */
+  errors: string[];
+  /** The `content` of each `warning` event. */
+  warnings: string[];
+  /** Every event of the turn, in order (without the closing `end`). */
+  events: ChatEvent[];
+  /** True when no `error` event arrived. */
+  readonly ok: boolean;
 }
 
+/**
+ * A chat SSE event. `type` is one of thinking, interpretation, progress,
+ * results, error, warning, auth_required, mfa_required, clarification,
+ * export_ready, text.
+ */
 export interface ChatEvent {
-  event: string;
-  data: Record<string, unknown>;
+  type: string;
+  content: string | null;
+  data: Record<string, unknown> | null;
+  actions: Record<string, unknown>[] | null;
+  timestamp: string | null;
 }
 
 // ── Fetchyr ───────────────────────────────────────────────────────────────────
@@ -252,6 +302,10 @@ export interface ExtractionResult extends Paginated {
   artifactId: string | null;
   jobId: string | null;
   error: string | null;
+  /** True when the API found a login page at the URL instead of content. */
+  authRequired: boolean;
+  /** The auth-chain discovery id when `authRequired`. */
+  discoveryId: string | null;
   readonly ok: boolean;
 }
 
@@ -280,6 +334,11 @@ export interface SiteCrawlResult {
   error: string | null;
 }
 
+/**
+ * A progress event of `client.crawlStream` (made by the SDK, not the API):
+ * discovery_started, discovery_complete, page_fetching, page_fetched,
+ * page_failed, crawl_complete.
+ */
 export interface CrawlProgressEvent {
   type: string;
   url: string | null;

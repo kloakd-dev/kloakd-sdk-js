@@ -75,7 +75,7 @@ export async function followJob(
     if (status === 'completed') return (job['result'] as Record<string, unknown> | undefined) ?? {};
     if (status === 'failed') throw new JobFailedError(String(job['error'] ?? 'Job failed'), jobId);
     if (Date.now() + interval > deadline) {
-      throw new JobTimeoutError(`Job ${jobId} still running`, jobId);
+      throw new JobTimeoutError(`Job ${jobId} still running; resume waiting with its id`, jobId);
     }
     await sleep(interval);
     interval = Math.min(interval * POLL_BACKOFF, MAX_POLL_INTERVAL_MS);
@@ -95,4 +95,18 @@ export async function postFollowingHandoff(
   const { status, body: raw } = await t.postWithStatus(path, body);
   if (status !== 202 || !isHandedOff(raw)) return raw;
   return followJob(raw.job_id, () => t.getAbsolute(raw.poll_url), opts);
+}
+
+/** The state of a handed-off job (`GET handoff/{job_id}`): `{status, result?, error?}`. */
+export async function getHandoff(t: HttpTransport, jobId: string): Promise<Record<string, unknown>> {
+  return t.get(`handoff/${encodeURIComponent(jobId)}`);
+}
+
+/** Poll a handed-off job until it completes (its result), fails or the wait runs out. */
+export async function waitForHandoff(
+  t: HttpTransport,
+  jobId: string,
+  opts: HandoffOptions = {},
+): Promise<Record<string, unknown>> {
+  return followJob(jobId, () => getHandoff(t, jobId), opts);
 }

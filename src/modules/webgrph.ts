@@ -1,6 +1,8 @@
 import type { HttpTransport } from '../_http.js';
+import { seg } from '../_params.js';
 import { JobFailedError, JobTimeoutError } from '../errors.js';
 import type { CrawlEvent, CrawlResult, PageNode } from '../models.js';
+import { parsePipelineEvent } from '../_events.js';
 
 function parsePageNode(n: Record<string, unknown>): PageNode {
   const metadata = (n['metadata'] as Record<string, unknown> | undefined) ?? {};
@@ -17,7 +19,9 @@ const FINISHED = new Set(['completed', 'failed', 'cancelled']);
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 export interface CrawlOptions {
+  /** Unset: the API's default for the organisation's tier. */
   maxDepth?: number;
+  /** Unset: the API's default for the organisation's tier. */
   maxPages?: number;
   includeExternalLinks?: boolean;
   sessionArtifactId?: string;
@@ -37,12 +41,10 @@ export class WebgrphNamespace {
 
   /** Start a crawl (the API answers 202 with its id). */
   async startCrawl(url: string, opts: CrawlOptions = {}): Promise<string> {
-    const body: Record<string, unknown> = {
-      url,
-      max_depth: opts.maxDepth ?? 3,
-      max_pages: opts.maxPages ?? 100,
-      include_external_links: opts.includeExternalLinks ?? false,
-    };
+    // max_depth / max_pages are sent only when set: the API then uses the tier's defaults.
+    const body: Record<string, unknown> = { url, include_external_links: opts.includeExternalLinks ?? false };
+    if (opts.maxDepth !== undefined) body['max_depth'] = opts.maxDepth;
+    if (opts.maxPages !== undefined) body['max_pages'] = opts.maxPages;
     if (opts.sessionArtifactId) body['session_artifact_id'] = opts.sessionArtifactId;
     if (opts.fastMode !== undefined) body['fast_mode'] = opts.fastMode;
     if (opts.captureMode) body['capture_mode'] = opts.captureMode;
@@ -65,7 +67,7 @@ export class WebgrphNamespace {
     const deadline = Date.now() + (opts.timeoutMs ?? 30 * 60 * 1000);
     let status = await this.getCrawlStatus(crawlId);
     while (!FINISHED.has(String(status['status'] ?? ''))) {
-      if (Date.now() + interval > deadline) throw new JobTimeoutError(`Crawl ${crawlId} still running`, crawlId);
+      if (Date.now() + interval > deadline) throw new JobTimeoutError(`Crawl ${crawlId} still running; check it with getCrawlStatus`, crawlId);
       await sleep(interval);
       status = await this.getCrawlStatus(crawlId);
     }
@@ -80,32 +82,30 @@ export class WebgrphNamespace {
     return (await this.crawl(url, opts)).pages;
   }
 
-  /** Start a crawl and stream its progress events (Server-Sent Events). */
+  /**
+   * Start a crawl and stream its pipeline events (Server-Sent Events). The
+   * last is `pipeline_complete` (its `metadata.discovery_response` holds the
+   * result) or `pipeline_error`.
+   */
   async *crawlStream(url: string, opts: Omit<CrawlOptions, 'wait'> = {}): AsyncIterable<CrawlEvent> {
     const crawlId = await this.startCrawl(url, opts);
     for await (const data of this.crawlEvents(crawlId)) {
-      yield {
-        type: String(data['event_type'] ?? data['type'] ?? ''),
-        url: (data['url'] as string | undefined) ?? null,
-        depth: data['depth'] != null ? Number(data['depth']) : null,
-        pagesFound: data['pages_found'] != null ? Number(data['pages_found']) : null,
-        metadata: { crawlId, ...((data['metadata'] as Record<string, unknown> | undefined) ?? data) },
-      };
+      yield { ...parsePipelineEvent(data), crawlId };
     }
   }
 
   async getCrawlStatus(crawlId: string): Promise<Record<string, unknown>> {
-    return this._t.get(`webgrph/crawl/${crawlId}`);
+    return this._t.get(`webgrph/crawl/${seg(crawlId)}`);
   }
 
   async cancelCrawl(crawlId: string): Promise<Record<string, unknown>> {
-    return this._t.post(`webgrph/crawl/${crawlId}/cancel`, {});
+    return this._t.post(`webgrph/crawl/${seg(crawlId)}/cancel`, {});
   }
 
   /** A crawl's progress events; `lastSequence` resumes after an event already seen. */
   crawlEvents(crawlId: string, lastSequence?: number): AsyncIterable<Record<string, unknown>> {
     return this._t.streamGet(
-      `webgrph/crawl/${crawlId}/events`,
+      `webgrph/crawl/${seg(crawlId)}/events`,
       lastSequence != null ? { last_sequence: String(lastSequence) } : undefined,
     );
   }
@@ -117,7 +117,7 @@ export class WebgrphNamespace {
   ): Promise<{ crawlId: string; nodes: PageNode[]; nextCursor: string | null; total: number }> {
     const params: Record<string, string> = { limit: String(opts.limit ?? 500) };
     if (opts.cursor) params['cursor'] = opts.cursor;
-    const raw = await this._t.get(`webgrph/crawl/${crawlId}/pages`, params);
+    const raw = await this._t.get(`webgrph/crawl/${seg(crawlId)}/pages`, params);
     return {
       crawlId: String(raw['crawl_id'] ?? crawlId),
       nodes: ((raw['nodes'] as Record<string, unknown>[] | undefined) ?? []).map(parsePageNode),
@@ -151,11 +151,11 @@ export class WebgrphNamespace {
     return this._t.get('webgrph/detected-apis', { page_url: pageUrl });
   }
 
+  /** Discovery sessions; `activeOnly` defaults to true, as in the API, and is always sent. */
   async listSessions(opts: { activeOnly?: boolean } = {}): Promise<Record<string, unknown>[]> {
-    return this._t.get<Record<string, unknown>[]>(
-      'webgrph/sessions',
-      opts.activeOnly !== undefined ? { active_only: String(opts.activeOnly) } : undefined,
-    );
+    return this._t.get<Record<string, unknown>[]>('webgrph/sessions', {
+      active_only: String(opts?.activeOnly ?? true),
+    });
   }
 
   async saveSession(session: {
@@ -173,19 +173,19 @@ export class WebgrphNamespace {
   }
 
   async getSession(sessionId: string): Promise<Record<string, unknown>> {
-    return this._t.get(`webgrph/sessions/${sessionId}`);
+    return this._t.get(`webgrph/sessions/${seg(sessionId)}`);
   }
 
   async deleteSession(sessionId: string): Promise<void> {
-    await this._t.delete(`webgrph/sessions/${sessionId}`);
+    await this._t.delete(`webgrph/sessions/${seg(sessionId)}`);
   }
 
   async endSession(sessionId: string): Promise<Record<string, unknown>> {
-    return this._t.post(`webgrph/sessions/${sessionId}/end`, {});
+    return this._t.post(`webgrph/sessions/${seg(sessionId)}/end`, {});
   }
 
   async updateSessionJob(sessionId: string, jobId: string): Promise<Record<string, unknown>> {
-    return this._t.request('PATCH', `webgrph/sessions/${sessionId}/job`, undefined, { job_id: jobId });
+    return this._t.request('PATCH', `webgrph/sessions/${seg(sessionId)}/job`, undefined, { job_id: jobId });
   }
 }
 

@@ -76,7 +76,7 @@ describe('kolektr.extractHtml', () => {
     const body = parseCallBody((fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls[0]!);
     expect(body['html']).toBe('<html>...</html>');
     expect(body['url']).toBe('https://example.com');
-    expect(body['schema_spec']).toEqual({ fields: [{ name: 'title', selector: 'css:h1' }] });
+    expect(body['schema_spec']).toEqual({ fields: [{ name: 'title', selector: 'h1' }] });
   });
 
   it('returns ExtractionResult', async () => {

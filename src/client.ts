@@ -21,36 +21,100 @@
  */
 
 import { HttpTransport } from './_http.js';
+import { getHandoff, waitForHandoff } from './_handoff.js';
+import type { HandoffOptions } from './_handoff.js';
+import {
+  AuthenticationError,
+  BillingUnavailableError,
+  NotEntitledError,
+  PaymentRequiredError,
+  QuotaExceededError,
+  RateLimitError,
+} from './errors.js';
 import { EvadrNamespace } from './modules/evadr.js';
+import type { FetchOptions } from './modules/evadr.js';
 import { FetchyrNamespace } from './modules/fetchyr.js';
 import { KolektrNamespace } from './modules/kolektr.js';
+import type { ExtractSchema } from './modules/kolektr.js';
 import { NexusNamespace } from './modules/nexus.js';
 import { ParlyrNamespace } from './modules/parlyr.js';
 import { SkanyrNamespace } from './modules/skanyr.js';
 import { WebgrphNamespace } from './modules/webgrph.js';
-import type { CrawlPage, CrawlProgressEvent, SiteCrawlResult } from './models.js';
+import type { CrawlOptions } from './modules/webgrph.js';
+import type { CrawlPage, CrawlProgressEvent, CrawlResult, FetchResult, SiteCrawlResult } from './models.js';
 
 const DEFAULT_BASE_URL = 'https://api.kloakd.dev';
-const DEFAULT_TIMEOUT = 60;
+/**
+ * Seconds. Above the API's 85 s synchronous wait, so a long request
+ * receives the API's 202 hand-off (which the SDK follows) instead of timing out.
+ */
+const DEFAULT_TIMEOUT = 100;
 const DEFAULT_MAX_RETRIES = 3;
 
 export interface KloakdOptions {
   apiKey: string;
   organizationId: string;
   baseUrl?: string;
+  /** Per-request timeout in seconds (default 100). Event streams have none. */
   timeout?: number;
+  /** Retries of a failed request (default 3); see the retry policy in the README. */
   maxRetries?: number;
   /** Injected fetch — for testing only. */
   fetchImpl?: typeof fetch;
 }
 
 export interface CrawlOrchestratorOptions {
+  /** Unset: the API's default for the organisation's tier. */
   maxDepth?: number;
+  /** Unset: the API's default for the organisation's tier. */
   maxPages?: number;
-  extractSchema?: Record<string, string>;
-  outputFormat?: 'json' | 'markdown';
+  /** Extract each fetched page with this schema (see `kolektr.page`). */
+  extractSchema?: ExtractSchema;
   includeExternalLinks?: boolean;
   sessionArtifactId?: string;
+}
+
+/**
+ * Errors that stop a crawl's page loop instead of being recorded on a page:
+ * every later page would fail the same way.
+ */
+function isFatal(err: unknown): boolean {
+  return (
+    err instanceof PaymentRequiredError ||
+    err instanceof QuotaExceededError ||
+    err instanceof BillingUnavailableError ||
+    err instanceof NotEntitledError ||
+    err instanceof AuthenticationError ||
+    err instanceof RateLimitError
+  );
+}
+
+function failedPage(url: string, error: string): CrawlPage {
+  return {
+    success: false,
+    url,
+    statusCode: 0,
+    tierUsed: 0,
+    html: null,
+    structuredData: null,
+    artifactId: null,
+    error,
+    get ok() { return false; },
+  };
+}
+
+function fetchedPage(fetchResult: FetchResult, structuredData: Record<string, unknown> | null): CrawlPage {
+  return {
+    success: fetchResult.success,
+    url: fetchResult.url,
+    statusCode: fetchResult.statusCode,
+    tierUsed: fetchResult.tierUsed,
+    html: fetchResult.html,
+    structuredData,
+    artifactId: fetchResult.artifactId,
+    error: fetchResult.error,
+    get ok() { return fetchResult.success && fetchResult.error === null; },
+  };
 }
 
 export class Kloakd {
@@ -86,94 +150,51 @@ export class Kloakd {
     this.kolektr = new KolektrNamespace(this._transport);
   }
 
-  async crawl(url: string, opts: CrawlOrchestratorOptions = {}): Promise<SiteCrawlResult> {
-    const crawlResult = await this.webgrph.crawl(url, {
-      maxDepth: opts.maxDepth ?? 3,
-      maxPages: opts.maxPages ?? 100,
-      includeExternalLinks: opts.includeExternalLinks ?? false,
-      ...(opts.sessionArtifactId && { sessionArtifactId: opts.sessionArtifactId }),
-    });
-
-    const pages: CrawlPage[] = [];
-    let fetched = 0;
-    let failed = 0;
-
-    for (const node of crawlResult.pages) {
-      try {
-        const fetchResult = await this.evadr.fetch(node.url, {
-          ...(opts.sessionArtifactId && { sessionArtifactId: opts.sessionArtifactId }),
-        });
-
-        let structuredData: Record<string, unknown> | null = null;
-        if (opts.extractSchema && fetchResult.ok) {
-          try {
-            const extraction = await this.kolektr.page(node.url, {
-              schema: opts.extractSchema,
-              ...(fetchResult.artifactId && { fetchArtifactId: fetchResult.artifactId }),
-            });
-            structuredData = extraction.records.length > 0
-              ? extraction.records[0] ?? null
-              : null;
-          } catch {
-            // Extraction failure is non-fatal — page still has HTML
-          }
-        }
-
-        const page: CrawlPage = {
-          success: fetchResult.success,
-          url: fetchResult.url,
-          statusCode: fetchResult.statusCode,
-          tierUsed: fetchResult.tierUsed,
-          html: fetchResult.html,
-          structuredData,
-          artifactId: fetchResult.artifactId,
-          error: fetchResult.error,
-          get ok() { return fetchResult.success && fetchResult.error === null; },
-        };
-        pages.push(page);
-        if (page.ok) fetched++; else failed++;
-      } catch (err) {
-        const errMsg = err instanceof Error ? err.message : String(err);
-        pages.push({
-          success: false,
-          url: node.url,
-          statusCode: 0,
-          tierUsed: 0,
-          html: null,
-          structuredData: null,
-          artifactId: null,
-          error: errMsg,
-          get ok() { return false; },
-        });
-        failed++;
-      }
-    }
-
-    return {
-      success: true,
-      url,
-      totalPagesDiscovered: crawlResult.totalPages,
-      pagesFetched: fetched,
-      pagesFailed: failed,
-      pages,
-      crawlArtifactId: crawlResult.artifactId,
-      error: null,
-    };
+  /**
+   * The state of a request the API handed off as a job (HTTP 202):
+   * `{status: running|completed|failed, result?, error?}`
+   * (`GET handoff/{job_id}`). A 404 means unknown or expired (after an hour).
+   */
+  async getHandoff(jobId: string): Promise<Record<string, unknown>> {
+    return getHandoff(this._transport, jobId);
   }
 
+  /**
+   * Wait for a handed-off job and return the route's own result; use it to
+   * resume after a JobTimeoutError (its `jobId`). Throws JobFailedError if
+   * the job failed or is gone, JobTimeoutError if still running at `pollTimeoutMs`.
+   */
+  async waitForHandoff(jobId: string, opts: HandoffOptions = {}): Promise<Record<string, unknown>> {
+    return waitForHandoff(this._transport, jobId, opts);
+  }
+
+  /**
+   * Crawl a site, fetch every page found and (with `extractSchema`) extract
+   * each. A page that fails is recorded on its page; billing, auth and
+   * rate-limit errors stop the crawl and are thrown.
+   */
+  async crawl(url: string, opts: CrawlOrchestratorOptions = {}): Promise<SiteCrawlResult> {
+    let result: SiteCrawlResult | undefined;
+    for await (const event of this.crawlStream(url, opts)) {
+      if (event.type === 'crawl_complete') result = event.metadata['result'] as SiteCrawlResult;
+    }
+    return result!;
+  }
+
+  /** As crawl(), yielding progress events; the last (`crawl_complete`) carries the result in `metadata.result`. */
   async *crawlStream(url: string, opts: CrawlOrchestratorOptions = {}): AsyncIterable<CrawlProgressEvent> {
     yield { type: 'discovery_started', url, page: null, total: null, success: null, error: null, metadata: {} };
 
-    const crawlResult = await this.webgrph.crawl(url, {
-      maxDepth: opts.maxDepth ?? 3,
-      maxPages: opts.maxPages ?? 100,
-      includeExternalLinks: opts.includeExternalLinks ?? false,
-      ...(opts.sessionArtifactId && { sessionArtifactId: opts.sessionArtifactId }),
-    });
+    const crawlOpts: CrawlOptions = { includeExternalLinks: opts.includeExternalLinks ?? false };
+    if (opts.maxDepth !== undefined) crawlOpts.maxDepth = opts.maxDepth;
+    if (opts.maxPages !== undefined) crawlOpts.maxPages = opts.maxPages;
+    if (opts.sessionArtifactId) crawlOpts.sessionArtifactId = opts.sessionArtifactId;
+    const crawlResult: CrawlResult = await this.webgrph.crawl(url, crawlOpts);
 
     const total = crawlResult.totalPages;
-    yield { type: 'discovery_complete', url, page: null, total, success: null, error: null, metadata: { pagesFound: total } };
+    yield { type: 'discovery_complete', url, page: null, total, success: crawlResult.success, error: crawlResult.error, metadata: { pagesFound: total } };
 
+    const fetchOpts: FetchOptions = opts.sessionArtifactId ? { sessionArtifactId: opts.sessionArtifactId } : {};
     const pages: CrawlPage[] = [];
     let fetched = 0;
     let failed = 0;
@@ -184,76 +205,50 @@ export class Kloakd {
 
       yield { type: 'page_fetching', url: node.url, page: pageNum, total, success: null, error: null, metadata: {} };
 
+      let page: CrawlPage;
       try {
-        const fetchResult = await this.evadr.fetch(node.url, {
-          ...(opts.sessionArtifactId && { sessionArtifactId: opts.sessionArtifactId }),
-        });
-
+        const fetchResult = await this.evadr.fetch(node.url, fetchOpts);
         let structuredData: Record<string, unknown> | null = null;
         if (opts.extractSchema && fetchResult.ok) {
           try {
-            const extraction = await this.kolektr.page(node!.url, {
+            const extraction = await this.kolektr.page(node.url, {
               schema: opts.extractSchema,
               ...(fetchResult.artifactId && { fetchArtifactId: fetchResult.artifactId }),
             });
-            structuredData = extraction.records.length > 0
-              ? extraction.records[0] ?? null
-              : null;
-          } catch {
-            // Extraction failure is non-fatal
+            structuredData = extraction.records[0] ?? null;
+          } catch (err) {
+            if (isFatal(err)) throw err;
+            // Any other extraction failure is recorded as no data; the page still has its HTML.
           }
         }
-
-        const page: CrawlPage = {
-          success: fetchResult.success,
-          url: fetchResult.url,
-          statusCode: fetchResult.statusCode,
-          tierUsed: fetchResult.tierUsed,
-          html: fetchResult.html,
-          structuredData,
-          artifactId: fetchResult.artifactId,
-          error: fetchResult.error,
-          get ok() { return fetchResult.success && fetchResult.error === null; },
-        };
-        pages.push(page);
-
-        if (page.ok) {
-          fetched++;
-          yield { type: 'page_fetched', url: node.url, page: pageNum, total, success: true, error: null, metadata: { tierUsed: fetchResult.tierUsed } };
-        } else {
-          failed++;
-          yield { type: 'page_failed', url: node.url, page: pageNum, total, success: false, error: fetchResult.error, metadata: {} };
-        }
+        page = fetchedPage(fetchResult, structuredData);
       } catch (err) {
-        const errMsg = err instanceof Error ? err.message : String(err);
-        pages.push({
-          success: false,
-          url: node.url,
-          statusCode: 0,
-          tierUsed: 0,
-          html: null,
-          structuredData: null,
-          artifactId: null,
-          error: errMsg,
-          get ok() { return false; },
-        });
+        if (isFatal(err)) throw err;
+        page = failedPage(node.url, err instanceof Error ? err.message : String(err));
+      }
+
+      pages.push(page);
+      if (page.ok) {
+        fetched++;
+        yield { type: 'page_fetched', url: node.url, page: pageNum, total, success: true, error: null, metadata: { tierUsed: page.tierUsed } };
+      } else {
         failed++;
-        yield { type: 'page_failed', url: node.url, page: pageNum, total, success: false, error: errMsg, metadata: {} };
+        yield { type: 'page_failed', url: node.url, page: pageNum, total, success: false, error: page.error, metadata: {} };
       }
     }
 
     const result: SiteCrawlResult = {
-      success: true,
+      success: crawlResult.success,
       url,
       totalPagesDiscovered: total,
       pagesFetched: fetched,
       pagesFailed: failed,
       pages,
       crawlArtifactId: crawlResult.artifactId,
-      error: null,
+      error: crawlResult.error,
     };
 
-    yield { type: 'crawl_complete', url, page: null, total, success: true, error: null, metadata: { result } };
+    yield { type: 'crawl_complete', url, page: null, total, success: result.success, error: result.error, metadata: { result } };
   }
 
   toString(): string {

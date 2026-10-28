@@ -1,4 +1,4 @@
-import { makeClient, mockFetch, mockSseFetch, mockSseEventFetch, parseCallBody, callUrl } from './helpers.js';
+import { makeClient, mockFetch, mockSseEventFetch, parseCallBody, callUrl } from './helpers.js';
 
 describe('parlyr.parse', () => {
   it('returns ParseResult', async () => {
@@ -48,33 +48,58 @@ describe('parlyr.parse', () => {
   });
 });
 
+/** The API's chat events (application/services/chat_orchestrator.py ChatEvent.to_json). */
+const ev = (type: string, content: string | null, data: Record<string, unknown> | null = null, actions: unknown = null) => ({
+  event: type,
+  data: { type, content, data, actions, timestamp: '2026-10-28T00:00:00' },
+});
+
 describe('parlyr.chat', () => {
-  it('collects SSE events into ChatTurn', async () => {
+  it('builds the turn from text, clarification, interpretation and results events', async () => {
     const client = makeClient(mockSseEventFetch([
-      { event: 'intent', data: { intent: 'scrape_products', confidence: 0.92, tier: 1, entities: { url: 'example.com' }, requires_action: false } },
-      { event: 'response', data: { content: 'I will scrape example.com for you.' } },
-      { event: 'done', data: {} },
+      ev('thinking', 'Understanding context...', { stage: 'llm_reasoning', tier: 3 }),
+      ev('interpretation', 'I will extract products from example.com.', { url: 'https://example.com', entity: 'products', summary: 'Extract products' },
+        [{ id: 'start', label: 'Start' }]),
+      ev('progress', 'Fetching', { pct: 50 }),
+      ev('results', 'Extracted 2 items', { items: [{ a: 1 }, { a: 2 }], count: 2, job_id: 'j-1' }),
+      ev('warning', 'Slow site'),
+      ev('text', 'Done.'),
+      { event: 'end', data: {} },
     ]));
     const turn = await client.parlyr.chat('sess-001', 'Scrape example.com');
     expect(turn.sessionId).toBe('sess-001');
-    expect(turn.intent).toBe('scrape_products');
-    expect(turn.confidence).toBe(0.92);
-    expect(turn.response).toBe('I will scrape example.com for you.');
-    expect(turn.requiresAction).toBe(false);
+    expect(turn.response).toBe('Done.');
+    expect(turn.interpretation).toEqual({ url: 'https://example.com', entity: 'products', summary: 'Extract products' });
+    expect(turn.intent).toBeNull(); // the API's interpretation data has no intent key
+    expect(turn.results).toEqual([{ items: [{ a: 1 }, { a: 2 }], count: 2, job_id: 'j-1' }]);
+    expect(turn.warnings).toEqual(['Slow site']);
+    expect(turn.events.map((e) => e.type)).toEqual(['thinking', 'interpretation', 'progress', 'results', 'warning', 'text']);
+    expect(turn.events[1]!.actions).toEqual([{ id: 'start', label: 'Start' }]);
+    expect(turn.ok).toBe(true);
   });
 
-  it('uses safe defaults when no intent event arrives', async () => {
+  it('joins text and clarification content and reads intent when interpretation data has one', async () => {
     const client = makeClient(mockSseEventFetch([
-      { event: 'response', data: { content: 'Here you go.' } },
+      ev('interpretation', 'x', { intent: 'scrape' }),
+      ev('text', 'First.'),
+      ev('clarification', 'Which page?', { confidence: 0.4 }),
+      { event: 'end', data: {} },
     ]));
-    const turn = await client.parlyr.chat('sess-002', 'hello');
-    expect(turn.intent).toBe('unknown');
-    expect(turn.confidence).toBe(0);
-    expect(turn.response).toBe('Here you go.');
+    const turn = await client.parlyr.chat('s', 'm');
+    expect(turn.response).toBe('First.\nWhich page?');
+    expect(turn.clarificationNeeded).toBe('Which page?');
+    expect(turn.intent).toBe('scrape');
+  });
+
+  it('surfaces error events: errors and ok false', async () => {
+    const client = makeClient(mockSseEventFetch([ev('error', 'Scrape failed'), { event: 'end', data: {} }]));
+    const turn = await client.parlyr.chat('s', 'm');
+    expect(turn.errors).toEqual(['Scrape failed']);
+    expect(turn.ok).toBe(false);
   });
 
   it('sends session_id and message in payload', async () => {
-    const fetch = mockSseEventFetch([{ event: 'done', data: {} }]);
+    const fetch = mockSseEventFetch([{ event: 'end', data: {} }]);
     const client = makeClient(fetch);
     await client.parlyr.chat('my-session', 'my message');
     const body = parseCallBody((fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls[0]!);
@@ -84,20 +109,18 @@ describe('parlyr.chat', () => {
 });
 
 describe('parlyr.chatStream', () => {
-  it('yields ChatEvent objects', async () => {
+  it('yields the real event fields and stops at end', async () => {
     const client = makeClient(mockSseEventFetch([
-      { event: 'intent', data: { intent: 'scrape_products', confidence: 0.9 } },
-      { event: 'response', data: { content: 'Scraping...' } },
-      { event: 'done', data: {} },
+      ev('thinking', 'Hmm', { tier: 3 }),
+      ev('text', 'Hello'),
+      { event: 'end', data: {} },
     ]));
     const events = [];
-    for await (const event of client.parlyr.chatStream('sess-001', 'hello')) {
-      events.push(event);
-    }
-    expect(events).toHaveLength(3);
-    expect(events[0]!.event).toBe('intent');
-    expect(events[1]!.event).toBe('response');
-    expect(events[2]!.event).toBe('done');
+    for await (const event of client.parlyr.chatStream('sess-001', 'hello')) events.push(event);
+    expect(events).toEqual([
+      { type: 'thinking', content: 'Hmm', data: { tier: 3 }, actions: null, timestamp: '2026-10-28T00:00:00' },
+      { type: 'text', content: 'Hello', data: null, actions: null, timestamp: '2026-10-28T00:00:00' },
+    ]);
   });
 });
 

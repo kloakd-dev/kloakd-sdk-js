@@ -117,8 +117,12 @@ export class NexusNamespace {
     return { ...result, get ok() { return result.error === null; } };
   }
 
-  /** Run a reasoning query (`query_type` is required by the API). */
-  async reason(queryType: string, parameters: Record<string, unknown> = {}, opts: { perceptionId?: string; timeoutSecs?: number } = {}): Promise<Record<string, unknown>> {
+  /**
+   * Run a reasoning query. `parameters` is a list of strings
+   * (modules/nexus/router.py ReasonRequest); the answer is
+   * `{success, results: string[], confidence, reasoning_id, …}`.
+   */
+  async reason(queryType: string, parameters: string[] = [], opts: { perceptionId?: string; timeoutSecs?: number } = {}): Promise<Record<string, unknown>> {
     const body: Record<string, unknown> = { query_type: queryType, parameters };
     if (opts.perceptionId) body['perception_id'] = opts.perceptionId;
     if (opts.timeoutSecs) body['timeout_secs'] = opts.timeoutSecs;

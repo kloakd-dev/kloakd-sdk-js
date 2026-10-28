@@ -1,6 +1,7 @@
 import type { HttpTransport } from '../_http.js';
 import { postFollowingHandoff } from '../_handoff.js';
 import type { HandoffOptions } from '../_handoff.js';
+import { query, seg } from '../_params.js';
 import type {
   DuplicateCheckResult,
   FormDetectionResult,
@@ -50,6 +51,20 @@ function parseChallenge(raw: Record<string, unknown>): MfaChallenge {
   };
 }
 
+/** A dependency between two sites of a multi-site workflow (modules/fetchyr/router.py SiteDependencyModel). */
+export interface SiteDependency {
+  /** The site that waits. */
+  dependentSite: string;
+  /** The site that must complete first. */
+  dependencySite: string;
+  /** sequential (the API's default), data or conditional. */
+  dependencyType?: string;
+  condition?: string;
+  dataRequirements?: string[];
+  /** Max wait for the dependency, in seconds. */
+  timeout?: number;
+}
+
 export class FetchyrNamespace {
   constructor(private readonly _t: HttpTransport) {}
 
@@ -79,7 +94,7 @@ export class FetchyrNamespace {
   /** Store login credentials (encrypted server-side) for authenticate(). */
   async storeCredentials(
     name: string,
-    credentials: { username: string; password: string; extra?: Record<string, unknown> },
+    credentials: { username: string; password: string; extra?: Record<string, string> },
   ): Promise<Record<string, unknown>> {
     const body: Record<string, unknown> = { name, username: credentials.username, password: credentials.password };
     if (credentials.extra) body['extra'] = credentials.extra;
@@ -91,7 +106,7 @@ export class FetchyrNamespace {
   }
 
   async deleteCredentials(name: string): Promise<void> {
-    await this._t.delete(`fetchyr/account/credentials/${encodeURIComponent(name)}`);
+    await this._t.delete(`fetchyr/account/credentials/${seg(name)}`);
   }
 
   async listSessions(): Promise<Record<string, unknown>[]> {
@@ -99,7 +114,7 @@ export class FetchyrNamespace {
   }
 
   async invalidateSession(artifactId: string): Promise<void> {
-    await this._t.delete(`fetchyr/sessions/${artifactId}`);
+    await this._t.delete(`fetchyr/sessions/${seg(artifactId)}`);
   }
 
   /** Alias of invalidateSession. */
@@ -127,18 +142,18 @@ export class FetchyrNamespace {
     const body: Record<string, unknown> = { target_url: targetUrl };
     if (opts.sessionArtifactId) body['session_artifact_id'] = opts.sessionArtifactId;
     if (opts.inputData) body['input_data'] = opts.inputData;
-    const raw = await this._t.post(`fetchyr/workflows/${workflowId}/execute`, body);
+    const raw = await this._t.post(`fetchyr/workflows/${seg(workflowId)}/execute`, body);
     return parseExecution(raw);
   }
 
   async getExecution(workflowId: string, executionId: string): Promise<WorkflowExecutionResult> {
-    const raw = await this._t.get(`fetchyr/workflows/${workflowId}/executions/${executionId}`);
+    const raw = await this._t.get(`fetchyr/workflows/${seg(workflowId)}/executions/${seg(executionId)}`);
     return parseExecution(raw);
   }
 
   /** Resume an execution paused for intervention (for example MFA). */
   async resumeExecution(workflowId: string, executionId: string, body: Record<string, unknown> = {}): Promise<WorkflowExecutionResult> {
-    const raw = await this._t.post(`fetchyr/workflows/${workflowId}/executions/${executionId}/resume`, body);
+    const raw = await this._t.post(`fetchyr/workflows/${seg(workflowId)}/executions/${seg(executionId)}/resume`, body);
     return parseExecution(raw);
   }
 
@@ -179,7 +194,7 @@ export class FetchyrNamespace {
 
   /** Resolve a queued MFA challenge with the code (or other resolution) the user supplied. */
   async submitMfa(challengeId: string, resolution: string): Promise<MfaChallenge> {
-    const raw = await this._t.post(`fetchyr/mfa-queue/${challengeId}/resolve`, { resolution });
+    const raw = await this._t.post(`fetchyr/mfa-queue/${seg(challengeId)}/resolve`, { resolution });
     return parseChallenge(raw);
   }
 
@@ -189,19 +204,20 @@ export class FetchyrNamespace {
   }
 
   async getMfaChallenge(challengeId: string): Promise<MfaChallenge> {
-    return parseChallenge(await this._t.get(`fetchyr/mfa/challenges/${challengeId}`));
+    return parseChallenge(await this._t.get(`fetchyr/mfa/challenges/${seg(challengeId)}`));
   }
 
   async getMfaStatistics(domain: string): Promise<Record<string, unknown>> {
-    return this._t.get(`fetchyr/mfa/statistics/${encodeURIComponent(domain)}`);
+    return this._t.get(`fetchyr/mfa/statistics/${seg(domain)}`);
   }
 
-  async listWorkflows(): Promise<Record<string, unknown>> {
-    return this._t.get('fetchyr/workflows');
+  /** RPA workflows: `{workflows, total, page, page_size}`. */
+  async listWorkflows(opts: { page?: number; pageSize?: number } = {}): Promise<Record<string, unknown>> {
+    return this._t.get('fetchyr/workflows', query({ page: opts?.page, page_size: opts?.pageSize }));
   }
 
   async getWorkflow(workflowId: string): Promise<WorkflowResult> {
-    return parseWorkflow(await this._t.get(`fetchyr/workflows/${workflowId}`));
+    return parseWorkflow(await this._t.get(`fetchyr/workflows/${seg(workflowId)}`));
   }
 
   async updateWorkflow(
@@ -213,25 +229,39 @@ export class FetchyrNamespace {
     if (updates.description !== undefined) body['description'] = updates.description;
     if (updates.steps !== undefined) body['steps'] = updates.steps;
     if (updates.isActive !== undefined) body['is_active'] = updates.isActive;
-    return parseWorkflow(await this._t.patch(`fetchyr/workflows/${workflowId}`, body));
+    return parseWorkflow(await this._t.patch(`fetchyr/workflows/${seg(workflowId)}`, body));
   }
 
   async deleteWorkflow(workflowId: string): Promise<void> {
-    await this._t.delete(`fetchyr/workflows/${workflowId}`);
+    await this._t.delete(`fetchyr/workflows/${seg(workflowId)}`);
   }
 
   async getWorkflowStatistics(workflowId: string): Promise<Record<string, unknown>> {
-    return this._t.get(`fetchyr/workflows/${workflowId}/statistics`);
+    return this._t.get(`fetchyr/workflows/${seg(workflowId)}/statistics`);
   }
 
+  /**
+   * Create a multi-site workflow. Each site is the API's site configuration
+   * (`site_id`, `name`, `url`, `workflow_steps`, …); each dependency says
+   * which site must finish before another.
+   */
   async createMultiSiteWorkflow(
     name: string,
     sites: Record<string, unknown>[],
-    opts: { description?: string; dependencies?: Record<string, unknown>; globalConfig?: Record<string, unknown> } = {},
+    opts: { description?: string; dependencies?: SiteDependency[]; globalConfig?: Record<string, unknown> } = {},
   ): Promise<Record<string, unknown>> {
     const body: Record<string, unknown> = { name, sites };
     if (opts.description) body['description'] = opts.description;
-    if (opts.dependencies) body['dependencies'] = opts.dependencies;
+    if (opts.dependencies) {
+      body['dependencies'] = opts.dependencies.map((d) => {
+        const dep: Record<string, unknown> = { dependent_site: d.dependentSite, dependency_site: d.dependencySite };
+        if (d.dependencyType !== undefined) dep['dependency_type'] = d.dependencyType;
+        if (d.condition !== undefined) dep['condition'] = d.condition;
+        if (d.dataRequirements !== undefined) dep['data_requirements'] = d.dataRequirements;
+        if (d.timeout !== undefined) dep['timeout'] = d.timeout;
+        return dep;
+      });
+    }
     if (opts.globalConfig) body['global_config'] = opts.globalConfig;
     return this._t.post('fetchyr/multi-site-workflows', body);
   }
@@ -264,15 +294,15 @@ export class FetchyrNamespace {
   }
 
   async getDedupSession(sessionId: string): Promise<Record<string, unknown>> {
-    return this._t.get(`fetchyr/deduplication/sessions/${sessionId}`);
+    return this._t.get(`fetchyr/deduplication/sessions/${seg(sessionId)}`);
   }
 
   async getDedupSessionStatistics(sessionId: string): Promise<Record<string, unknown>> {
-    return this._t.get(`fetchyr/deduplication/sessions/${sessionId}/statistics`);
+    return this._t.get(`fetchyr/deduplication/sessions/${seg(sessionId)}/statistics`);
   }
 
   async getDedupDomainStatistics(domain: string): Promise<Record<string, unknown>> {
-    return this._t.get(`fetchyr/deduplication/statistics/${encodeURIComponent(domain)}`);
+    return this._t.get(`fetchyr/deduplication/statistics/${seg(domain)}`);
   }
 
   // ── Auth-chain discovery (login flows that need user input) ──────────
@@ -282,14 +312,14 @@ export class FetchyrNamespace {
   }
 
   async getAuthChainStatus(discoveryId: string): Promise<Record<string, unknown>> {
-    return this._t.get(`fetchyr/auth-chain/${discoveryId}/status`);
+    return this._t.get(`fetchyr/auth-chain/${seg(discoveryId)}/status`);
   }
 
   async resumeAuthChainCredentials(discoveryId: string, body: Record<string, unknown>): Promise<Record<string, unknown>> {
-    return this._t.post(`fetchyr/auth-chain/${discoveryId}/resume-credentials`, body);
+    return this._t.post(`fetchyr/auth-chain/${seg(discoveryId)}/resume-credentials`, body);
   }
 
   async resumeAuthChainMfa(discoveryId: string, body: Record<string, unknown>): Promise<Record<string, unknown>> {
-    return this._t.post(`fetchyr/auth-chain/${discoveryId}/resume-mfa`, body);
+    return this._t.post(`fetchyr/auth-chain/${seg(discoveryId)}/resume-mfa`, body);
   }
 }

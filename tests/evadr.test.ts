@@ -104,20 +104,22 @@ describe('evadr.storeProxy', () => {
 });
 
 describe('evadr.fetchStream', () => {
-  it('yields FetchEvent objects from SSE stream', async () => {
+  it('reads pipeline events and the polling fallback events (evadr/router.py)', async () => {
     const client = makeClient(mockSseFetch([
-      { type: 'tier_start', tier: 1, vendor: null, metadata: {} },
-      { type: 'tier_complete', tier: 1, vendor: 'cloudflare', metadata: { bypassed: true } },
-      { type: 'done', tier: 1, vendor: 'cloudflare', metadata: {} },
+      { pipeline_id: 'j1', event_type: 'stage_progress', stage_id: 'tier_1', status: 'running', phase: 'fetch',
+        message: 'Tier 1', progress_pct: 40, metadata: { a: 1 }, error: null, sequence: 3 },
+      { type: 'STATUS', job_id: 'j1', status: 'running' },
+      { type: 'COMPLETE', job_id: 'j1', tier_used: 2, artifact_id: 'art-9' },
+      { type: 'FAILED', job_id: 'j1', error: 'blocked' },
     ]));
     const events = [];
-    for await (const event of client.evadr.fetchStream('https://example.com')) {
-      events.push(event);
-    }
-    expect(events).toHaveLength(3);
-    expect(events[0]!.type).toBe('tier_start');
-    expect(events[1]!.vendor).toBe('cloudflare');
-    expect(events[2]!.type).toBe('done');
+    for await (const event of client.evadr.fetchStream('https://example.com')) events.push(event);
+    expect(events).toHaveLength(4);
+    expect(events[0]).toMatchObject({ type: 'stage_progress', stageId: 'tier_1', status: 'running', message: 'Tier 1',
+      progressPct: 40, metadata: { a: 1 }, error: null, sequence: 3, tierUsed: null, artifactId: null });
+    expect(events[1]).toMatchObject({ type: 'STATUS', status: 'running' });
+    expect(events[2]).toMatchObject({ type: 'COMPLETE', tierUsed: 2, artifactId: 'art-9' });
+    expect(events[3]).toMatchObject({ type: 'FAILED', error: 'blocked' });
   });
 
   it('passes forceBrowser in SSE request body', async () => {

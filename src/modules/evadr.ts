@@ -1,7 +1,9 @@
 import type { HttpTransport } from '../_http.js';
+import { seg } from '../_params.js';
 import { followJob, postFollowingHandoff } from '../_handoff.js';
 import type { HandoffOptions } from '../_handoff.js';
 import type { AnalyzeResult, FetchEvent, FetchResult } from '../models.js';
+import { parsePipelineEvent } from '../_events.js';
 
 function parseFetch(raw: Record<string, unknown>, url: string): FetchResult {
   const result = {
@@ -14,6 +16,8 @@ function parseFetch(raw: Record<string, unknown>, url: string): FetchResult {
     antiBotBypassed: Boolean(raw['anti_bot_bypassed']),
     artifactId: (raw['artifact'] as Record<string, unknown> | undefined)?.['artifact_id'] as string | undefined ?? (raw['artifact_id'] as string | undefined) ?? null,
     error: (raw['error'] as string | undefined) ?? null,
+    authRequired: Boolean(raw['auth_required']),
+    discoveryId: (raw['discovery_id'] as string | undefined) ?? null,
   };
   return { ...result, get ok() { return result.success && result.error === null; } };
 }
@@ -69,15 +73,20 @@ export class EvadrNamespace {
     });
   }
 
-  /** Start a fetch as a job and stream its progress events. */
+  /**
+   * Start a fetch as a job and stream its progress events: pipeline events,
+   * or (when the API polls the job instead) STATUS, COMPLETE, FAILED or ERROR.
+   */
   async *fetchStream(url: string, opts: FetchAsyncOptions = {}): AsyncIterable<FetchEvent> {
     const jobId = await this.fetchAsync(url, opts);
     for await (const data of this.jobEvents(jobId)) {
+      const { eventType, error: pipelineError, ...rest } = parsePipelineEvent(data);
       yield {
-        type: String(data['event_type'] ?? data['type'] ?? ''),
-        tier: data['tier'] != null ? Number(data['tier']) : null,
-        vendor: (data['vendor'] as string | undefined) ?? null,
-        metadata: (data['metadata'] as Record<string, unknown> | undefined) ?? data,
+        ...rest,
+        type: eventType,
+        tierUsed: data['tier_used'] != null ? Number(data['tier_used']) : null,
+        artifactId: typeof data['artifact_id'] === 'string' ? (data['artifact_id'] as string) : null,
+        error: typeof data['error'] === 'string' ? (data['error'] as string) : pipelineError,
       };
     }
   }
@@ -111,12 +120,12 @@ export class EvadrNamespace {
   }
 
   async getJob(jobId: string): Promise<Record<string, unknown>> {
-    return this._t.get(`evadr/jobs/${jobId}`);
+    return this._t.get(`evadr/jobs/${seg(jobId)}`);
   }
 
   /** A fetch job's progress events (Server-Sent Events). */
   jobEvents(jobId: string): AsyncIterable<Record<string, unknown>> {
-    return this._t.streamGet(`evadr/jobs/${jobId}/events`);
+    return this._t.streamGet(`evadr/jobs/${seg(jobId)}/events`);
   }
 
   async listVendors(): Promise<Record<string, unknown>[]> {
@@ -132,6 +141,6 @@ export class EvadrNamespace {
   }
 
   async deleteProxy(name: string): Promise<void> {
-    await this._t.delete(`evadr/proxies/${encodeURIComponent(name)}`);
+    await this._t.delete(`evadr/proxies/${seg(name)}`);
   }
 }

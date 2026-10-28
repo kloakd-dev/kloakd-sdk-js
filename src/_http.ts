@@ -2,31 +2,78 @@
  * KLOAKD SDK — Shared HTTP transport layer (TypeScript).
  *
  * Uses the native `fetch` API (Node 18+, all modern browsers).
- * Retry policy:
- *   - Retryable: 429 (rate_limited), 500, 502, 503, 504
- *   - Non-retryable: 400, 401, 402, 403, 404, 429 gb_exhausted
- *   - 503 billing_unavailable respects Retry-After
- *   - Strategy: exponential backoff (1s * 2^attempt), cap 60s
- *   - 429 respects Retry-After header
- *   - Max attempts: configurable, default 3
+ *
+ * Retry policy (up to `maxRetries` retries, default 3; waits capped at 60 s):
+ *   - 429 `rate_limited`, any method: after `Retry-After` (or the body's
+ *     `retry_after`, or until `reset_at`). Not retried when it is the
+ *     playground quota (`retry_after` 0 and no `reset_at`).
+ *   - 503 `billing_unavailable`, any method: after `Retry-After` (no work was done).
+ *   - Other 5xx and network errors: GET, HEAD and DELETE only, with
+ *     exponential backoff (1 s * 2^attempt). POST, PUT and PATCH are never
+ *     retried on these, since the API may already have done the work.
+ *   - Never retried: 4xx other than the above, and 429 `gb_exhausted`.
  */
 
-import { KloakdError, QuotaExceededError, raiseForStatus } from './errors.js';
+import { BillingUnavailableError, KloakdError, RateLimitError, raiseForStatus } from './errors.js';
 
-export const SDK_VERSION = '0.4.0';
-const RETRYABLE = new Set([429, 500, 502, 503, 504]);
+export const SDK_VERSION = '0.5.0';
+export const USER_AGENT = `kloakd-sdk-js/${SDK_VERSION}`;
+const IDEMPOTENT = new Set(['GET', 'HEAD', 'DELETE']);
+const MAX_WAIT_MS = 60_000;
 
 function sdkHeader(): string {
   return `typescript/${SDK_VERSION}`;
 }
 
-function backoff(attempt: number, retryAfter?: number): number {
-  if (retryAfter != null && retryAfter >= 0) return Math.min(retryAfter * 1000, 60_000);
-  return Math.min(1000 * Math.pow(2, attempt), 60_000);
+function backoffMs(attempt: number): number {
+  return Math.min(1000 * Math.pow(2, attempt), MAX_WAIT_MS);
 }
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** How long to wait before retrying `err` on `method`, or null when it is not retried. */
+function retryDelayMs(err: unknown, method: string, attempt: number): number | null {
+  if (err instanceof RateLimitError) {
+    if (err.quotaExhausted) return null;
+    if (err.retryAfter > 0) return Math.min(err.retryAfter * 1000, MAX_WAIT_MS);
+    const reset = err.resetAt ? Date.parse(err.resetAt) : NaN;
+    if (Number.isFinite(reset)) return Math.min(Math.max(reset - Date.now(), 0), MAX_WAIT_MS);
+    return backoffMs(attempt);
+  }
+  if (err instanceof BillingUnavailableError) {
+    return Math.min(Math.max(err.retryAfter, 0) * 1000, MAX_WAIT_MS);
+  }
+  if (!IDEMPOTENT.has(method)) return null;
+  if (err instanceof KloakdError) return err.statusCode >= 500 ? backoffMs(attempt) : null;
+  // A network error or timeout from fetch itself.
+  return backoffMs(attempt);
+}
+
+/** Read a response body: JSON when it is JSON, otherwise its text (for error messages). */
+async function readBody(resp: Response): Promise<{ json: Record<string, unknown> | null; text: string }> {
+  const isJson = resp.headers.get('content-type')?.includes('application/json') ?? false;
+  let text = '';
+  if (typeof resp.text === 'function') {
+    try { text = await resp.text(); } catch { text = ''; }
+    if (isJson && text) {
+      try { return { json: JSON.parse(text) as Record<string, unknown>, text }; } catch { /* not JSON after all */ }
+    }
+    return { json: null, text };
+  }
+  // Minimal Response-likes (tests) that only implement json().
+  if (isJson && typeof resp.json === 'function') {
+    try { return { json: (await resp.json()) as Record<string, unknown>, text: '' }; } catch { /* fall through */ }
+  }
+  return { json: null, text };
+}
+
+/** Throw the typed error for a non-2xx response; a body that is not JSON becomes the message. */
+async function raiseForResponse(resp: Response): Promise<void> {
+  const { json, text } = await readBody(resp);
+  const body = json ?? (text.trim() ? { detail: text.trim().slice(0, 2000) } : {});
+  raiseForStatus(resp.status, body, resp.headers);
 }
 
 export interface TransportOptions {
@@ -61,6 +108,7 @@ export class HttpTransport {
       Authorization: `Bearer ${this._apiKey}`,
       'X-Kloakd-Organization': this._organizationId,
       'X-Kloakd-SDK': sdkHeader(),
+      'User-Agent': USER_AGENT,
       'Content-Type': 'application/json',
     };
   }
@@ -113,49 +161,49 @@ export class HttpTransport {
     body?: Record<string, unknown>,
     params?: Record<string, string>,
   ): Promise<{ status: number; body: T }> {
+    const resp = await this.fetchWithRetry(method, url, body, params);
+    const { json } = await readBody(resp);
+    return { status: resp.status, body: (json ?? {}) as T };
+  }
+
+  /** Send a request and return its body as bytes (for binary answers such as a zip). */
+  async requestBytes(method: string, path: string, body?: Record<string, unknown>): Promise<Uint8Array> {
+    const resp = await this.fetchWithRetry(method, this.url(path), body);
+    return new Uint8Array(await resp.arrayBuffer());
+  }
+
+  /** Send with the retry policy above; returns the first 2xx response. */
+  private async fetchWithRetry(
+    method: string,
+    url: string,
+    body?: Record<string, unknown>,
+    params?: Record<string, string>,
+  ): Promise<Response> {
     let fullUrl = url;
     if (params && Object.keys(params).length > 0) {
       fullUrl += '?' + new URLSearchParams(params).toString();
     }
+    const upper = method.toUpperCase();
 
-    const headers = this.authHeaders();
-    const init: RequestInit = {
-      method,
-      headers,
-      signal: AbortSignal.timeout(this._timeout * 1000),
-    };
-    if (body !== undefined) {
-      init.body = JSON.stringify(body);
-    }
-
-    let lastError: KloakdError | undefined;
-
-    for (let attempt = 0; attempt <= this._maxRetries; attempt++) {
-      const resp = await this._fetch(fullUrl, init);
-      const json = resp.headers.get('content-type')?.includes('application/json')
-        ? ((await resp.json()) as Record<string, unknown>)
-        : {};
+    for (let attempt = 0; ; attempt++) {
+      const init: RequestInit = {
+        method: upper,
+        headers: this.authHeaders(),
+        // Each attempt gets its own timeout (seconds, `timeout` option).
+        signal: AbortSignal.timeout(this._timeout * 1000),
+      };
+      if (body !== undefined) init.body = JSON.stringify(body);
 
       try {
-        raiseForStatus(resp.status, json, resp.headers);
-        return { status: resp.status, body: json as T };
+        const resp = await this._fetch(fullUrl, init);
+        if (resp.status >= 400) await raiseForResponse(resp);
+        return resp;
       } catch (err) {
-        if (!(err instanceof KloakdError)) throw err;
-        if (!RETRYABLE.has(err.statusCode) || err instanceof QuotaExceededError) throw err;
-
-        lastError = err;
-        if (attempt < this._maxRetries) {
-          const header = resp.headers.get('retry-after');
-          const retryAfter =
-            err.statusCode === 429 || err.statusCode === 503
-              ? Number(header ?? (err as { retryAfter?: number }).retryAfter ?? (err.statusCode === 429 ? 60 : undefined))
-              : undefined;
-          await sleep(backoff(attempt, Number.isFinite(retryAfter) ? retryAfter : undefined));
-        }
+        const delay = attempt < this._maxRetries ? retryDelayMs(err, upper, attempt) : null;
+        if (delay === null) throw err;
+        await sleep(delay);
       }
     }
-
-    throw lastError!;
   }
 
   async get<T = Record<string, unknown>>(path: string, params?: Record<string, string>): Promise<T> {
@@ -186,10 +234,6 @@ export class HttpTransport {
     await this.request('DELETE', path);
   }
 
-  /**
-   * Open an SSE stream and return an AsyncIterable over raw `data:` payloads.
-   * Caller is responsible for parsing each chunk.
-   */
   /** POST an SSE stream; yields each `data:` payload. */
   async *stream(path: string, body: Record<string, unknown>): AsyncIterable<Record<string, unknown>> {
     for await (const { data } of this._sse('POST', path, body)) yield data;
@@ -225,12 +269,7 @@ export class HttpTransport {
     if (body !== undefined) init.body = JSON.stringify(body);
     const resp = await this._fetch(fullUrl, init);
 
-    if (resp.status >= 400) {
-      const json = resp.headers.get('content-type')?.includes('application/json')
-        ? ((await resp.json()) as Record<string, unknown>)
-        : {};
-      raiseForStatus(resp.status, json, resp.headers);
-    }
+    if (resp.status >= 400) await raiseForResponse(resp);
     if (!resp.body) return;
 
     const reader = resp.body.getReader();

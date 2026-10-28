@@ -42,9 +42,12 @@ describe('nexus', () => {
     expect([r.patterns.length, r.totalPatterns]).toEqual([1, 1]);
   });
 
-  it('reason sends query_type', async () => {
+  it('reason sends query_type and parameters as a list of strings (nexus/router.py ReasonRequest)', async () => {
     const fetch = mockFetch({});
-    await makeClient(fetch).nexus.reason('page_type', { url: 'u' });
-    expect(parseCallBody(first(fetch))).toEqual({ query_type: 'page_type', parameters: { url: 'u' } });
+    await makeClient(fetch).nexus.reason('page_type', ['u', 'v']);
+    expect(parseCallBody(first(fetch))).toEqual({ query_type: 'page_type', parameters: ['u', 'v'] });
+    const fetch2 = mockFetch({});
+    await makeClient(fetch2).nexus.reason('page_type');
+    expect(parseCallBody(first(fetch2))).toEqual({ query_type: 'page_type', parameters: [] });
   });
 });

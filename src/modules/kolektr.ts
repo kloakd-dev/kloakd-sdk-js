@@ -2,6 +2,7 @@ import type { HttpTransport } from '../_http.js';
 import { postFollowingHandoff } from '../_handoff.js';
 import type { HandoffOptions } from '../_handoff.js';
 import type { ExtractionResult } from '../models.js';
+import { query, seg } from '../_params.js';
 
 function parseExtraction(raw: Record<string, unknown>, url: string): ExtractionResult {
   const result = {
@@ -14,6 +15,8 @@ function parseExtraction(raw: Record<string, unknown>, url: string): ExtractionR
     artifactId: (raw['artifact'] as Record<string, unknown> | undefined)?.['artifact_id'] as string | undefined ?? (raw['artifact_id'] as string | undefined) ?? null,
     jobId: (raw['job_id'] as string | undefined) ?? null,
     error: (raw['error'] as string | undefined) ?? null,
+    authRequired: Boolean(raw['auth_required']),
+    discoveryId: (raw['discovery_id'] as string | undefined) ?? null,
     hasMore: Boolean(raw['has_more']),
     total: Number(raw['total'] ?? 0),
   };
@@ -36,11 +39,17 @@ export interface SchemaSpec {
   outputFormat?: string;
 }
 
+/** An extraction schema: the API's spec, a list of fields, or the `{ field: "css:selector" }` shorthand. */
+export type ExtractSchema = SchemaSpec | FieldSpec[] | Record<string, string>;
+
 /**
- * The extraction schema as the API takes it (`schema_spec`). A plain
- * `{ fieldName: cssSelector }` map is accepted as shorthand.
+ * The extraction schema as the API takes it (`schema_spec`,
+ * modules/kolektr/router.py SchemaSpec). Accepts the spec itself, a list of
+ * fields, or the shorthand `{ fieldName: "css:selector" }`, whose `css:`
+ * prefix is optional and removed.
  */
-export function toSchemaSpec(schema: SchemaSpec | Record<string, string>): Record<string, unknown> {
+export function toSchemaSpec(schema: ExtractSchema): Record<string, unknown> {
+  if (Array.isArray(schema)) return { fields: schema };
   if (Array.isArray((schema as SchemaSpec).fields)) {
     const s = schema as SchemaSpec;
     const spec: Record<string, unknown> = { fields: s.fields };
@@ -50,13 +59,16 @@ export function toSchemaSpec(schema: SchemaSpec | Record<string, string>): Recor
     return spec;
   }
   return {
-    fields: Object.entries(schema as Record<string, string>).map(([name, selector]) => ({ name, selector })),
+    fields: Object.entries(schema as Record<string, string>).map(([name, selector]) => ({
+      name,
+      selector: String(selector).replace(/^css:/, ''),
+    })),
   };
 }
 
 /** Extraction options; the poll options apply when the API hands the extraction off as a job (202). */
 export interface PageOptions extends HandoffOptions {
-  schema?: SchemaSpec | Record<string, string>;
+  schema?: ExtractSchema;
   level?: string;
   fetchArtifactId?: string;
   sessionArtifactId?: string;
@@ -91,7 +103,7 @@ export class KolektrNamespace {
   async extractHtml(
     html: string,
     url: string,
-    opts: { schema?: SchemaSpec | Record<string, string> } = {},
+    opts: { schema?: ExtractSchema } = {},
   ): Promise<ExtractionResult> {
     const body: Record<string, unknown> = { html, url };
     if (opts.schema) body['schema_spec'] = toSchemaSpec(opts.schema);
@@ -99,29 +111,52 @@ export class KolektrNamespace {
     return parseExtraction(raw, url);
   }
 
-  async getApiData(apiEndpoint: string): Promise<Record<string, unknown>> {
-    return this._t.get(`kolektr/api-data/${apiEndpoint}`);
+  /** Records of a detected API endpoint (the endpoint URL is sent URL-encoded). */
+  async getApiData(apiEndpoint: string, opts: { endpointHash?: string } = {}): Promise<Record<string, unknown>> {
+    return this._t.get(`kolektr/api-data/${seg(apiEndpoint)}`, query({ endpoint_hash: opts?.endpointHash }));
   }
 
-  async getApiDataPaginated(apiEndpoint: string, offset = 0, limit = 1000): Promise<Record<string, unknown>> {
-    return this._t.get(`kolektr/api-data/${apiEndpoint}/paginated`, { offset: String(offset), limit: String(limit) });
+  async getApiDataPaginated(
+    apiEndpoint: string,
+    offset = 0,
+    limit = 1000,
+    opts: { endpointHash?: string } = {},
+  ): Promise<Record<string, unknown>> {
+    return this._t.get(
+      `kolektr/api-data/${seg(apiEndpoint)}/paginated`,
+      query({ offset, limit, endpoint_hash: opts?.endpointHash }),
+    );
   }
 
-  async extractAllApiData(apiEndpoint: string): Promise<Record<string, unknown>> {
-    return this._t.post(`kolektr/api-data/${apiEndpoint}/extract-all`, {});
+  /** Start a job extracting every record of an API endpoint. */
+  async extractAllApiData(
+    apiEndpoint: string,
+    opts: { endpointHash?: string; maxRecords?: number } = {},
+  ): Promise<Record<string, unknown>> {
+    const params = query({ endpoint_hash: opts?.endpointHash, max_records: opts?.maxRecords });
+    return this._t.request('POST', `kolektr/api-data/${seg(apiEndpoint)}/extract-all`, {}, params);
   }
 
-  async listContent(): Promise<Record<string, unknown>> { return this._t.get('kolektr/content'); }
-  async getContent(itemId: string): Promise<Record<string, unknown>> { return this._t.get(`kolektr/content/${itemId}`); }
-  async deleteContent(itemId: string): Promise<void> { await this._t.delete(`kolektr/content/${itemId}`); }
+  /** Content items: `{items, total, page, page_size}`. */
+  async listContent(opts: { page?: number; pageSize?: number; search?: string } = {}): Promise<Record<string, unknown>> {
+    return this._t.get('kolektr/content', query({ page: opts?.page, page_size: opts?.pageSize, search: opts?.search }));
+  }
+  async getContent(itemId: string): Promise<Record<string, unknown>> { return this._t.get(`kolektr/content/${seg(itemId)}`); }
+  async deleteContent(itemId: string): Promise<void> { await this._t.delete(`kolektr/content/${seg(itemId)}`); }
 
-  async listJobs(): Promise<Record<string, unknown>> { return this._t.get('kolektr/jobs'); }
-  async getJob(jobId: string): Promise<Record<string, unknown>> { return this._t.get(`kolektr/jobs/${jobId}`); }
-  async getJobStatus(jobId: string): Promise<Record<string, unknown>> { return this._t.get(`kolektr/extraction-jobs/${jobId}/status`); }
+  /** Extraction jobs: `{jobs, total, page, limit}`. */
+  async listJobs(opts: { page?: number; limit?: number; statusFilter?: string } = {}): Promise<Record<string, unknown>> {
+    return this._t.get('kolektr/jobs', query({ page: opts?.page, limit: opts?.limit, status_filter: opts?.statusFilter }));
+  }
+  async getJob(jobId: string): Promise<Record<string, unknown>> { return this._t.get(`kolektr/jobs/${seg(jobId)}`); }
+  async getJobStatus(jobId: string): Promise<Record<string, unknown>> { return this._t.get(`kolektr/extraction-jobs/${seg(jobId)}/status`); }
 
-  async listScrapers(): Promise<Record<string, unknown>> { return this._t.get('kolektr/scrapers'); }
+  /** Scraper configs: `{scrapers, total, page, page_size, has_next, has_prev}`. */
+  async listScrapers(opts: { page?: number; pageSize?: number; isTemplate?: boolean } = {}): Promise<Record<string, unknown>> {
+    return this._t.get('kolektr/scrapers', query({ page: opts?.page, page_size: opts?.pageSize, is_template: opts?.isTemplate }));
+  }
   async createScraper(config: Record<string, unknown>): Promise<Record<string, unknown>> { return this._t.post('kolektr/scrapers', config); }
-  async getScraper(scraperId: string): Promise<Record<string, unknown>> { return this._t.get(`kolektr/scrapers/${scraperId}`); }
-  async updateScraper(scraperId: string, updates: Record<string, unknown>): Promise<Record<string, unknown>> { return this._t.patch(`kolektr/scrapers/${scraperId}`, updates); }
-  async deleteScraper(scraperId: string): Promise<void> { await this._t.delete(`kolektr/scrapers/${scraperId}`); }
+  async getScraper(scraperId: string): Promise<Record<string, unknown>> { return this._t.get(`kolektr/scrapers/${seg(scraperId)}`); }
+  async updateScraper(scraperId: string, updates: Record<string, unknown>): Promise<Record<string, unknown>> { return this._t.patch(`kolektr/scrapers/${seg(scraperId)}`, updates); }
+  async deleteScraper(scraperId: string): Promise<void> { await this._t.delete(`kolektr/scrapers/${seg(scraperId)}`); }
 }

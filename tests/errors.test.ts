@@ -68,8 +68,8 @@ describe('raiseForStatus', () => {
     expect(() => raiseForStatus(401, { detail: 'bad key' })).toThrow(AuthenticationError);
   });
 
-  it('throws NotEntitledError for 403', () => {
-    expect(() => raiseForStatus(403, { detail: 'no plan', module: 'nexus' })).toThrow(NotEntitledError);
+  it('throws NotEntitledError for 403 not_entitled', () => {
+    expect(() => raiseForStatus(403, { detail: { error: 'not_entitled', message: 'no plan', module: 'nexus' } })).toThrow(NotEntitledError);
   });
 
   it('throws RateLimitError for 429', () => {
