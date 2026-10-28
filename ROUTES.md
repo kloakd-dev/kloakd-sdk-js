@@ -1,4 +1,4 @@
-# Routes the SDK calls (0.4.0)
+# Routes the SDK calls (0.5.0)
 
 Checked against the API's route list (`tests/fixtures/routes.tsv`, generated
 from kobe-scraper 4fb33ea4 with the module routers mounted as
@@ -43,7 +43,7 @@ All paths are under `/api/v1/organizations/{organization_id}/`.
 | POST | nexus/analyze | wrong fields (`html` optional) | `analyze(url, html, opts)` |
 | POST | nexus/synthesize | wrong fields (`perception_id`) | `synthesize(url, html, goal)` |
 | POST | nexus/verify, execute, knowledge | live, response read wrongly | response fields fixed |
-| POST | nexus/reason | wrong fields (free body) | `reason(queryType, parameters)` |
+| POST | nexus/reason | wrong fields (free body) | `reason(queryType, parameters)` (0.5.0: `parameters` is a list of strings) |
 | * | nexus/recommendations/... | live | unchanged (server-side many are broken: GAP-SEC-6; removed in 0.4.0) |
 | POST/DELETE | parlyr/parse, chat, chat/{id} | live | unchanged |
 | POST | skanyr/discover, discover/stream | removed | discovery is `webgrph.crawl` |
@@ -105,3 +105,29 @@ route list.
 
 `tests/contract.test.ts` checks that each of the nine methods follows a 202
 through a live poll route.
+
+## Changed in 0.5.0
+
+No route is added or removed; the requests and the reading of the answers
+change (kobe-scraper e5f15f7d).
+
+| Method | Path | 0.5.0 |
+|---|---|---|
+| GET | handoff/{job_id} | public: `client.getHandoff(jobId)`, `client.waitForHandoff(jobId, opts)` |
+| POST | parlyr/chat | events read as `{type, content, data, actions, timestamp}` (thinking, interpretation, progress, results, error, warning, auth_required, mfa_required, clarification, export_ready, text; then `end`) |
+| POST | kolektr/extract, extract/html | `schema_spec.fields[].selector` without the `css:` prefix; a fields list is accepted; reads `auth_required`, `discovery_id` |
+| POST | evadr/fetch | reads `auth_required`, `discovery_id` |
+| GET | evadr/jobs/{id}/events, webgrph/crawl/{id}/events | read as pipeline events (`event_type, stage_id, status, message, progress_pct, metadata, error, sequence`); fetch jobs also `{type, tier_used, artifact_id, error}` |
+| POST | nexus/reason | `parameters` is a list of strings |
+| PATCH | skanyr/sites/{id} | `updateSite(siteId, policy)`: `{policy: string}` |
+| POST | skanyr/sites/{id}/export | returns the ZIP bytes |
+| GET | skanyr/sites, resources, sites/{id}/resources, apis, findings, technologies | typed as arrays |
+| POST | fetchyr/multi-site-workflows | `dependencies` is a list of `{dependent_site, dependency_site, dependency_type?, condition?, data_requirements?, timeout?}` |
+| POST | webgrph/crawl | `max_depth` / `max_pages` sent only when set (the API applies the tier default) |
+| GET | webgrph/sessions | `active_only` always sent (default true) |
+| GET | kolektr/jobs | `page`, `limit`, `status_filter` |
+| GET | kolektr/scrapers | `page`, `page_size`, `is_template` |
+| GET | kolektr/content | `page`, `page_size`, `search` |
+| GET | fetchyr/workflows | `page`, `page_size` |
+| GET/POST | kolektr/api-data/{api_endpoint} | `endpoint_hash`; extract-all also `max_records`; the endpoint is URL-encoded |
+| * | every route with a path parameter | the parameter is URL-encoded |

@@ -1,6 +1,46 @@
 # Changelog
 
 All notable changes to the KLOAKD TypeScript/JavaScript SDK are documented here.
+Only 0.1.0 and 0.4.0 were published to npm before 0.5.0; 0.2.0 and 0.3.0 were never released there.
+
+## [0.5.0] — unreleased
+
+### Breaking
+- Default `timeout` is 100 s (was 60 s); it is in seconds. 100 s is above the API's 85 s synchronous wait, so a long request receives the 202 hand-off, which the SDK follows, instead of timing out.
+- POST, PUT and PATCH are no longer retried on 5xx or network errors (the API may have done the work). GET, HEAD and DELETE still are. 429 `rate_limited` and 503 `billing_unavailable` are retried on any method; a 429 with `retry_after` 0 and no `reset_at` (the playground quota) is not retried.
+- A 403 is `NotEntitledError` only for `not_entitled` and `tier_access_denied`; any other 403 is the new `ForbiddenError` (`NotEntitledError` extends it).
+- `parlyr.chat` returns `{sessionId, response, intent, interpretation, clarificationNeeded, results, errors, warnings, events, ok}`, read from the API's real events. `confidence`, `tier`, `entities` and `requiresAction` are gone (the chat stream never carried them); `intent` is `string | null` (the API's interpretation data has no intent key today). `error` events are in `errors` and make `ok` false.
+- `parlyr.chatStream` yields `{type, content, data, actions, timestamp}` (was `{event, data}`) and stops at `end`.
+- `ChatEvent`, `FetchEvent` and `CrawlEvent` follow the API: `FetchEvent` is `{type, stageId, status, message, progressPct, metadata, error, sequence, tierUsed, artifactId}` (`tier` and `vendor` are gone); `CrawlEvent` is a `PipelineEvent` (`eventType, stageId, status, message, progressPct, metadata, error, sequence`) plus `crawlId` (`type`, `url`, `depth`, `pagesFound` are gone).
+- `nexus.reason(queryType, parameters)`: `parameters` is `string[]` (was an object).
+- `skanyr.updateSite(siteId, policy)`: `policy` is a string (was `{ policy: object }`).
+- `skanyr.exportSite` returns the ZIP as `Uint8Array` (was a parsed JSON object, always empty).
+- `skanyr.listResources`, `getSiteResources`, `getSiteApis`, `getFindings` and `getTechnologies` are typed as arrays, as the API returns them.
+- `fetchyr.createMultiSiteWorkflow`: `dependencies` is a list of `SiteDependency` (`{dependentSite, dependencySite, dependencyType?, condition?, dataRequirements?, timeout?}`).
+- `fetchyr.storeCredentials`: `extra` is `Record<string, string>`, as the API takes it.
+- The extraction shorthand `{ field: "css:selector" }` sends the selector without `css:`.
+- `client.crawl` / `crawlStream`: `outputFormat` is removed (it was never sent); `maxDepth` and `maxPages` are sent only when set, so the API applies the tier's defaults (was 3 and 100); the result's `success` and `error` are the crawl's; payment, quota, billing, entitlement, authentication and rate-limit errors stop the crawl and are thrown instead of being recorded on each page.
+- `webgrph.startCrawl` / `crawl` send `max_depth` / `max_pages` only when set (was 3 and 100).
+- `webgrph.listSessions` always sends `active_only` (default true, as the API).
+- Path parameters are URL-encoded, including the `kolektr` api-data endpoint URL.
+
+### Added
+- `client.getHandoff(jobId)` and `client.waitForHandoff(jobId, opts)` (`GET handoff/{job_id}`), to resume a hand-off after `JobTimeoutError` (which carries `jobId`).
+- `ConcurrencyLimitError` (409 `concurrent_limit`: `concurrentLimit`, `activeCrawls`, `tier`).
+- `NotEntitledError.feature`, `currentTier`, `requiredTier` (from `tier_access_denied`); `KloakdError.code` (the API's error code).
+- `RateLimitError.quotaUsed`, `quotaLimit`, `upgradeUrl`, `quotaExhausted`.
+- `FetchResult` and `ExtractionResult`: `authRequired`, `discoveryId`.
+- Extraction schemas may be a list of fields (`ExtractSchema`), also in `client.crawl`'s `extractSchema`.
+- Paging: `kolektr.listJobs({page, limit, statusFilter})`, `listScrapers({page, pageSize, isTemplate})`, `listContent({page, pageSize, search})`, `fetchyr.listWorkflows({page, pageSize})`; `kolektr` api-data calls take `endpointHash`, and `extractAllApiData` `maxRecords`.
+- `User-Agent: kloakd-sdk-js/0.5.0`; `USER_AGENT` export.
+- README.md.
+
+### Fixed
+- A 422 keeps the API's validation messages (`detail[]`).
+- A non-JSON error body (a proxy's HTML page) no longer crashes; its text is the message.
+- Each retry gets its own timeout (one timeout covered every attempt).
+- The package `exports` map lists `types` first.
+
 
 ## [0.4.0] — 2026-10-28
 
@@ -26,7 +66,7 @@ These routes still exist but serve only the dashboard and are not part of the pu
 - Polling a handed-off job backs off: the first wait is `pollIntervalMs` (default 3 s), each later wait 1.5 times longer, at most 15 s. This applies to `evadr.fetch` and `evadr.waitForJob` too (0.3.0 polled at a fixed interval).
 - `evadr.fetch` detects a hand-off by the HTTP 202 status as well as the body's `job_id` and `poll_url`, and follows `poll_url`.
 
-## [0.3.0] — 2026-10-27
+## [0.3.0] — 2026-10-27 (not published to npm)
 
 Every request is now a live API route: `tests/contract.test.ts` calls each
 public method and checks it against the API's route list. The full table of
@@ -52,7 +92,7 @@ what changed per call is in `ROUTES.md`.
 - Event streams were opened with `AbortSignal.timeout(0)` and so were cancelled at once; streams now stay open. GET event streams (job and crawl events) are supported.
 - `fetchAsync` posted to the synchronous route with a stray `async` field; it uses `evadr/fetch/async`.
 
-## [0.2.0] — 2026-05-13
+## [0.2.0] — 2026-05-13 (not published to npm)
 
 ### Added
 - Full API coverage for all kernel module operations across 7 modules

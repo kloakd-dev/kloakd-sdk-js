@@ -1,15 +1,15 @@
 {
   "name": "kloakd-sdk",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "The official TypeScript/JavaScript SDK for the KLOAKD API",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
+      "types": "./dist/index.d.ts",
       "import": "./dist/index.mjs",
-      "require": "./dist/index.js",
-      "types": "./dist/index.d.ts"
+      "require": "./dist/index.js"
     }
   },
   "files": [

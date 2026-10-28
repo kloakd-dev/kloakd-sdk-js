@@ -2,6 +2,8 @@
  * The 0.5.0 fixes, each checked against the API's behaviour (paths under
  * kobe-scraper/src/kobe_scraper/ are named in each test).
  */
+import { readFileSync } from 'fs';
+import { join } from 'path';
 import { Kloakd } from '../src/client.js';
 import { SDK_VERSION, USER_AGENT } from '../src/_http.js';
 import { toSchemaSpec } from '../src/modules/kolektr.js';
@@ -54,6 +56,9 @@ describe('version and headers', () => {
   it('is 0.5.0 and sends User-Agent kloakd-sdk-js/0.5.0', async () => {
     expect(SDK_VERSION).toBe('0.5.0');
     expect(USER_AGENT).toBe('kloakd-sdk-js/0.5.0');
+    const pkg = JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf8')) as { version: string; exports: Record<string, Record<string, string>> };
+    expect(pkg.version).toBe(SDK_VERSION);
+    expect(Object.keys(pkg.exports['.']!)[0]).toBe('types');
     const f = answers({ status: 200, body: {} });
     await client(f).evadr.scan('u');
     const headers = (calls(f)[0]![1] as { headers: Record<string, string> }).headers;
