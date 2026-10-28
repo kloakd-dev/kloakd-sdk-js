@@ -118,18 +118,6 @@ export class KolektrNamespace {
   async listJobs(): Promise<Record<string, unknown>> { return this._t.get('kolektr/jobs'); }
   async getJob(jobId: string): Promise<Record<string, unknown>> { return this._t.get(`kolektr/jobs/${jobId}`); }
   async getJobStatus(jobId: string): Promise<Record<string, unknown>> { return this._t.get(`kolektr/extraction-jobs/${jobId}/status`); }
-  async getJobProgress(jobId: string): Promise<Record<string, unknown>> { return this._t.get(`kolektr/jobs/${jobId}/progress`); }
-  async getJobProgressEvents(jobId: string): Promise<Record<string, unknown>> { return this._t.get(`kolektr/jobs/${jobId}/progress/events`); }
-  async getJobProgressLatest(jobId: string): Promise<Record<string, unknown>> { return this._t.get(`kolektr/jobs/${jobId}/progress/latest`); }
-  async getJobProgressSummary(jobId: string): Promise<Record<string, unknown>> { return this._t.get(`kolektr/jobs/${jobId}/progress/summary`); }
-
-  async getPipelineEvents(pipelineId: string): Promise<Record<string, unknown>> { return this._t.get(`kolektr/pipeline/${pipelineId}/events`); }
-  async getPipelineStream(pipelineId: string): Promise<Record<string, unknown>> { return this._t.get(`kolektr/pipeline/${pipelineId}/stream`); }
-
-  async listProgressPhases(): Promise<Record<string, unknown>> { return this._t.get('kolektr/progress/phases'); }
-  async getProgressPhase(phaseName: string): Promise<Record<string, unknown>> { return this._t.get(`kolektr/progress/phases/${phaseName}`); }
-  async getProgressPhaseSteps(phaseName: string): Promise<Record<string, unknown>> { return this._t.get(`kolektr/progress/phases/${phaseName}/steps`); }
-  async getProgressSummary(): Promise<Record<string, unknown>> { return this._t.get('kolektr/progress/summary'); }
 
   async listScrapers(): Promise<Record<string, unknown>> { return this._t.get('kolektr/scrapers'); }
   async createScraper(config: Record<string, unknown>): Promise<Record<string, unknown>> { return this._t.post('kolektr/scrapers', config); }

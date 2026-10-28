@@ -102,7 +102,7 @@ export class NexusNamespace {
   /**
    * Learn from an execution result (Knowledge Layer). `executionResultId`
    * is `executionResultId` on the result of `execute()` (the API's
-   * `execution_result_id`).
+   * `execution_result_id`, the same value as that result's `artifactId`).
    */
   async knowledge(executionResultId: string): Promise<NexusKnowledgeResult> {
     const raw = await this._t.post('nexus/knowledge', { execution_result_id: executionResultId });

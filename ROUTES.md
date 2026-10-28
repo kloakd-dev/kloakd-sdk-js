@@ -18,7 +18,7 @@ All paths are under `/api/v1/organizations/{organization_id}/`.
 | POST | evadr/scan | wrong fields | body is `{url}` only |
 | GET | evadr/jobs/{id} | live | unchanged |
 | GET | evadr/jobs/{id}/events | live, read as JSON | `jobEvents` streams it (SSE) |
-| GET | evadr/vendors, profiles, proxies | live | unchanged |
+| GET | evadr/vendors, profiles, proxies | live | unchanged (`profiles` removed in 0.4.0) |
 | POST/DELETE | evadr/proxies[/{name}] | live | unchanged |
 | POST | fetchyr/login | wrong path and fields | `authenticate(credentialName, targetUrl)` → POST fetchyr/authenticate |
 | POST | fetchyr/fetch | removed | use `evadr.fetch(url, {sessionArtifactId})` |
@@ -39,7 +39,7 @@ All paths are under `/api/v1/organizations/{organization_id}/`.
 | POST | fetchyr/deduplication/sessions | wrong fields | `{name, strategy?}` |
 | GET | fetchyr/deduplication/... | live | unchanged |
 | POST | kolektr/extract, extract/html | wrong fields (`schema`, `limit`, `offset`) | `schema_spec`; no paging fields |
-| GET/POST | kolektr/api-data/..., content, jobs, extraction-jobs, pipeline, progress, scrapers | live | unchanged (`kolektr/jobs` POST was a server stub, GAP-API-2: removed in 0.4.0) |
+| GET/POST | kolektr/api-data/..., content, jobs, extraction-jobs, pipeline, progress, scrapers | live | unchanged (removed in 0.4.0: `kolektr/jobs` POST, a server stub, GAP-API-2; the job progress, progress phases and pipeline calls) |
 | POST | nexus/analyze | wrong fields (`html` optional) | `analyze(url, html, opts)` |
 | POST | nexus/synthesize | wrong fields (`perception_id`) | `synthesize(url, html, goal)` |
 | POST | nexus/verify, execute, knowledge | live, response read wrongly | response fields fixed |
@@ -57,7 +57,7 @@ All paths are under `/api/v1/organizations/{organization_id}/`.
 | POST | webgrph/crawl/stream | removed | `crawlStream` = crawl + GET webgrph/crawl/{id}/events |
 | GET | webgrph/crawl/{id}, events, pages | live | events streamed; pages by cursor |
 | GET | webgrph/hierarchy/{id}, jobs/{id} | removed | use `getCrawlPages` / `getCrawlStatus` |
-| GET | webgrph/analytics/... | live | unchanged |
+| GET | webgrph/analytics/... | live | unchanged (removed in 0.4.0) |
 
 Counts: 127 call sites in 0.2.0; 78 already right; 22 fixed (path, method,
 request or response fields); 27 removed or moved (19 with no route, 8 moved
@@ -76,15 +76,29 @@ Not covered: `GET skanyr/resources/{id}/download` (binary body) and
 
 ## Changed in 0.4.0
 
-The route list (`tests/fixtures/routes.tsv`) drops the 13
-`nexus/recommendations/...` routes, the standalone `recommendations/...`
-router (no longer mounted) and `POST kolektr/jobs`, and adds the hand-off
-poll `GET handoff/{job_id}`.
+The API removed the module routes that answered invented results
+(kobe-scraper d7d25134). The route list (`tests/fixtures/routes.tsv`) drops
+them: the 13 `nexus/recommendations/...` routes, the standalone
+`recommendations/...` router (no longer mounted), `POST kolektr/jobs`, the
+kolektr job progress, progress phases and pipeline routes,
+`webgrph/analytics/job-trends` and `error-summary`, and `evadr/profiles`. It
+adds the hand-off poll `GET handoff/{job_id}`.
+
+The other five `webgrph/analytics/...` routes still exist but serve only the
+dashboard (`modules/webgrph/analytics_router.py`; the public API spec
+excludes them), so the SDK no longer calls them; their rows stay in the
+route list.
 
 | Method | Path | 0.4.0 |
 |---|---|---|
 | * | nexus/recommendations/... (13 routes) | removed with their methods (`recommendAnalyze`, `listRecommendationApplications`, cache, hooks, preferences, statistics) |
 | POST | kolektr/jobs | `createJob` removed |
+| GET | kolektr/jobs/{id}/progress, progress/summary, progress/events, progress/latest | `getJobProgress`, `getJobProgressSummary`, `getJobProgressEvents`, `getJobProgressLatest` removed |
+| GET | kolektr/progress/phases, phases/{name}, phases/{name}/steps, progress/summary | `listProgressPhases`, `getProgressPhase`, `getProgressPhaseSteps`, `getProgressSummary` removed |
+| GET | kolektr/pipeline/{id}/stream, pipeline/{id}/events | `getPipelineStream`, `getPipelineEvents` removed |
+| GET | webgrph/analytics/job-trends, error-summary | `getJobTrends`, `getErrorSummary` removed |
+| GET | webgrph/analytics/dashboard/summary, content/discovery-patterns, scraping/efficiency-metrics, site-maps/trends, users/behavior-insights | dashboard-only: `getDashboardSummary`, `getDiscoveryPatterns`, `getEfficiencyMetrics`, `getSiteMappingTrends`, `getUserBehaviorInsights` removed |
+| GET | evadr/profiles | `listProfiles` removed |
 | POST | kolektr/extract, fetchyr/authenticate, fetchyr/form/detect, fetchyr/form/fill, fetchyr/mfa/detect, nexus/analyze, nexus/synthesize, nexus/execute | a 202 hand-off is followed: GET handoff/{job_id} (the 202's `poll_url`) until completed or failed |
 | POST | evadr/fetch | a 202 is followed through its `poll_url`, GET evadr/jobs/{job_id} |
 | POST | nexus/execute | reads `execution_result_id` (for `knowledge`) |

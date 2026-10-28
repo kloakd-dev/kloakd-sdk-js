@@ -4,13 +4,23 @@ All notable changes to the KLOAKD TypeScript/JavaScript SDK are documented here.
 
 ## [0.4.0] — 2026-10-28
 
-### Breaking
-- Removed the `nexus` recommendations methods, whose API routes are being deleted (they returned invented results): `recommendAnalyze`, `listRecommendationApplications`, `getCacheStatistics`, `cleanupCache`, `invalidateCache`, `getHooksStatus`, `enableHook`, `disableHook`, `createPreference`, `getPreferences`, `updatePreference`, `deletePreference`, `getRecommendationStatistics`.
-- Removed `kolektr.createJob` (`POST kolektr/jobs`, deleted for the same reason). `listJobs`, `getJob` and the job progress calls remain.
+### Removed (breaking)
+The API deleted these routes because they returned invented results, so their methods are gone:
+- `nexus` recommendations (`nexus/recommendations/*`): `recommendAnalyze`, `listRecommendationApplications`, `getCacheStatistics`, `cleanupCache`, `invalidateCache`, `getHooksStatus`, `enableHook`, `disableHook`, `createPreference`, `getPreferences`, `updatePreference`, `deletePreference`, `getRecommendationStatistics`.
+- `kolektr.createJob` (`POST kolektr/jobs`).
+- `kolektr` job progress: `getJobProgress`, `getJobProgressSummary`, `getJobProgressEvents`, `getJobProgressLatest` (`GET kolektr/jobs/{id}/progress[...]`).
+- `kolektr` progress phases: `listProgressPhases`, `getProgressPhase`, `getProgressPhaseSteps`, `getProgressSummary`.
+- `kolektr` pipeline: `getPipelineStream`, `getPipelineEvents`.
+- `webgrph.getJobTrends`, `webgrph.getErrorSummary`.
+- `evadr.listProfiles` (`evadr.listVendors` remains).
+
+These routes still exist but serve only the dashboard and are not part of the public API, so their methods are removed too: `webgrph.getDashboardSummary`, `getDiscoveryPatterns`, `getEfficiencyMetrics`, `getSiteMappingTrends`, `getUserBehaviorInsights`.
+
+`kolektr.listJobs` and `kolektr.getJob` remain.
 
 ### Added
 - Every synchronous route that can answer 202 after the API's time limit (about 85 s, below Cloudflare's 100 s) is followed to its result, returning the same typed result as a direct 200: `kolektr.page` / `pageAll` (`kolektr/extract`), `fetchyr.authenticate`, `detectForms`, `fillForm`, `detectMfa`, `nexus.analyze`, `synthesize`, `execute`, as `evadr.fetch` already was. The SDK polls the 202's `poll_url` (`…/handoff/{job_id}`; `…/evadr/jobs/{job_id}` for a fetch). A failed job throws `JobFailedError`, a job the API no longer has (404: unknown or expired after an hour) throws `JobFailedError`, and a job still running after `pollTimeoutMs` (default 15 minutes) throws `JobTimeoutError`. Each of these methods takes `pollIntervalMs` and `pollTimeoutMs` (type `HandoffOptions`).
-- `NexusExecuteResult.executionResultId`: the id to pass to `nexus.knowledge()` (null when the API gives none).
+- `NexusExecuteResult.executionResultId`: the id to pass to `nexus.knowledge()` (the API's `execution_result_id`, the same value as the result's artifact id; null when the API gives none).
 
 ### Changed
 - Polling a handed-off job backs off: the first wait is `pollIntervalMs` (default 3 s), each later wait 1.5 times longer, at most 15 s. This applies to `evadr.fetch` and `evadr.waitForJob` too (0.3.0 polled at a fixed interval).

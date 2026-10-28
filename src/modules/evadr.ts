@@ -123,10 +123,6 @@ export class EvadrNamespace {
     return this._t.get('evadr/vendors');
   }
 
-  async listProfiles(): Promise<Record<string, unknown>[]> {
-    return this._t.get('evadr/profiles');
-  }
-
   async listProxies(): Promise<Record<string, unknown>[]> {
     return this._t.get('evadr/proxies');
   }

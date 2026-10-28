@@ -4,8 +4,9 @@
  * tests/fixtures/routes.tsv is the backend's route list (METHOD\tPATH,
  * generated from kobe-scraper 4fb33ea4 with the module routers mounted as
  * kernel/bootstrap.py does; for 0.4.0 the nexus/recommendations routes, the
- * unmounted standalone recommendations router and POST kolektr/jobs are
- * removed, and the hand-off poll GET handoff/{job_id} is added). Each public
+ * unmounted standalone recommendations router, POST kolektr/jobs and the
+ * other routes kobe-scraper d7d25134 deleted are removed, and the hand-off
+ * poll GET handoff/{job_id} is added). Each public
  * method of each namespace is called with placeholder arguments against a
  * recording fetch.
  */
@@ -152,7 +153,30 @@ describe('every route that can hand off is followed through a live poll route', 
 
   it('the removed routes are not in the route list', () => {
     expect(routes.some((r) => r.path.includes('/recommendations/'))).toBe(false);
-    expect(isLive('POST', `${ORG_PREFIX}/kolektr/jobs`)).toBe(false);
+    const removed: Array<[string, string]> = [
+      ['POST', 'kolektr/jobs'],
+      ['GET', 'kolektr/jobs/j-1/progress'],
+      ['GET', 'kolektr/jobs/j-1/progress/summary'],
+      ['GET', 'kolektr/jobs/j-1/progress/events'],
+      ['GET', 'kolektr/jobs/j-1/progress/latest'],
+      ['GET', 'kolektr/progress/phases'],
+      ['GET', 'kolektr/progress/phases/p'],
+      ['GET', 'kolektr/progress/phases/p/steps'],
+      ['GET', 'kolektr/progress/summary'],
+      ['GET', 'kolektr/pipeline/p-1/stream'],
+      ['GET', 'kolektr/pipeline/p-1/events'],
+      ['GET', 'webgrph/analytics/job-trends'],
+      ['GET', 'webgrph/analytics/error-summary'],
+      ['GET', 'evadr/profiles'],
+    ];
+    expect(removed.filter(([m, p]) => isLive(m, `${ORG_PREFIX}/${p}`))).toEqual([]);
+    expect(isLive('GET', `${ORG_PREFIX}/kolektr/jobs`)).toBe(true);
     expect(isLive('GET', `${ORG_PREFIX}/kolektr/jobs/j-1`)).toBe(true);
+    expect(isLive('GET', `${ORG_PREFIX}/evadr/vendors`)).toBe(true);
+  });
+
+  it('the SDK does not call the dashboard-only webgrph analytics routes', async () => {
+    const calls = await callEverything();
+    expect(calls.filter((c) => c.path.includes('/webgrph/analytics/'))).toEqual([]);
   });
 });
