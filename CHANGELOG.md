@@ -3,7 +3,7 @@
 All notable changes to the KLOAKD TypeScript/JavaScript SDK are documented here.
 Only 0.1.0 and 0.4.0 were published to npm before 0.5.0; 0.2.0 and 0.3.0 were never released there.
 
-## [0.6.0] — unreleased
+## [0.6.0] — 2026-11-03
 
 For the API deployed on 2 November 2026 (kobe-scraper 0bb0c6b5). Nothing is
 removed; 0.5.0 code keeps working.
