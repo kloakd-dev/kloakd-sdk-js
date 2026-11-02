@@ -28,11 +28,12 @@ export {
 
 export { SDK_VERSION, USER_AGENT } from './_http.js';
 export { toSchemaSpec } from './modules/kolektr.js';
-export type { ExtractSchema, FieldSpec, SchemaSpec, PageOptions } from './modules/kolektr.js';
+export type { ExtractSchema, ExtractHtmlOptions, FieldSpec, SchemaSpec, ShorthandField, PageOptions } from './modules/kolektr.js';
 export type { SiteDependency } from './modules/fetchyr.js';
 export type { FetchOptions, FetchAsyncOptions } from './modules/evadr.js';
 export type { HandoffOptions } from './_handoff.js';
-export type { CrawlOptions } from './modules/webgrph.js';
+export { CRAWL_PAGES_DEFAULT_LIMIT, CRAWL_PAGES_MAX_LIMIT } from './modules/webgrph.js';
+export type { CrawlOptions, CrawlPagesOptions } from './modules/webgrph.js';
 
 export type {
   AnalyzeResult,

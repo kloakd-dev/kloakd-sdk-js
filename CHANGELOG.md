@@ -3,7 +3,44 @@
 All notable changes to the KLOAKD TypeScript/JavaScript SDK are documented here.
 Only 0.1.0 and 0.4.0 were published to npm before 0.5.0; 0.2.0 and 0.3.0 were never released there.
 
-## [0.5.0] — unreleased
+## [0.6.0] — unreleased
+
+For the API deployed on 2 November 2026 (kobe-scraper 0bb0c6b5). Nothing is
+removed; 0.5.0 code keeps working.
+
+### Added
+- `itemSelector` (GAP-API-11): one record per element on a list page, each
+  field read inside it. On `kolektr.page` / `pageAll` / `extractHtml` options,
+  on `SchemaSpec`, and as `extractItemSelector` in `client.crawl` /
+  `crawlStream`. Sent as `schema_spec.item_selector`. `toSchemaSpec(schema,
+  itemSelector?)` takes it as a second argument. An empty item selector, or
+  one with no schema or no fields, throws before sending.
+- Shorthand fields may be `{ selector, attribute, type }` as well as a
+  selector string (`ShorthandField`); `ExtractHtmlOptions` type.
+- `CrawlPage.records`: every extracted record of a page (`structuredData` is
+  still the first).
+- `webgrph.getCrawlPages(crawlId, { includeGrouping })` and
+  `crawlAllPages(crawlId, { limit, includeGrouping })` (GAP-API-9/10);
+  `webgrph.crawl(url, { includeGrouping })` loads its pages that way.
+  `CrawlPagesOptions`, `CRAWL_PAGES_DEFAULT_LIMIT`, `CRAWL_PAGES_MAX_LIMIT`.
+- `PageNode.isGrouping`, `parentUrl` and `crawlParentUrl` (the last only
+  from stored page records; the pages listing does not send it).
+- `ConcurrencyLimitError.activeRequests` (GAP-BILL-13): requests in flight
+  when every work slot is in use.
+
+### Changed
+- `getCrawlPages` throws `RangeError` for a `limit` outside 1–1000 (the API
+  answers 422). A cursor that is not a non-negative integer is now the API's
+  422 (`ApiError`); it used to restart at 0.
+- The API lists only fetched pages by default and counts only fetched pages
+  in `total_pages` / `max_depth_reached`.
+- `User-Agent: kloakd-sdk-js/0.6.0`.
+
+### Documented
+- Work slots per plan (Free 2, Starter 5, Pro 10, Pro+ 20, Developer 50,
+  Enterprise 100); 409 `concurrent_limit` is not retried.
+
+## [0.5.0] — 2026-10-28
 
 ### Breaking
 - Default `timeout` is 100 s (was 60 s); it is in seconds. 100 s is above the API's 85 s synchronous wait, so a long request receives the 202 hand-off, which the SDK follows, instead of timing out.

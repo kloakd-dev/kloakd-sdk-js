@@ -34,7 +34,7 @@ import {
 import { EvadrNamespace } from './modules/evadr.js';
 import type { FetchOptions } from './modules/evadr.js';
 import { FetchyrNamespace } from './modules/fetchyr.js';
-import { KolektrNamespace } from './modules/kolektr.js';
+import { KolektrNamespace, toSchemaSpec } from './modules/kolektr.js';
 import type { ExtractSchema } from './modules/kolektr.js';
 import { NexusNamespace } from './modules/nexus.js';
 import { ParlyrNamespace } from './modules/parlyr.js';
@@ -70,6 +70,12 @@ export interface CrawlOrchestratorOptions {
   maxPages?: number;
   /** Extract each fetched page with this schema (see `kolektr.page`). */
   extractSchema?: ExtractSchema;
+  /**
+   * With `extractSchema`: one record per element this CSS selector matches on
+   * each page (see `kolektr.page`). Every record is in the page's `records`;
+   * `structuredData` is the first.
+   */
+  extractItemSelector?: string;
   includeExternalLinks?: boolean;
   sessionArtifactId?: string;
 }
@@ -97,13 +103,18 @@ function failedPage(url: string, error: string): CrawlPage {
     tierUsed: 0,
     html: null,
     structuredData: null,
+    records: [],
     artifactId: null,
     error,
     get ok() { return false; },
   };
 }
 
-function fetchedPage(fetchResult: FetchResult, structuredData: Record<string, unknown> | null): CrawlPage {
+function fetchedPage(
+  fetchResult: FetchResult,
+  structuredData: Record<string, unknown> | null,
+  records: Record<string, unknown>[] = [],
+): CrawlPage {
   return {
     success: fetchResult.success,
     url: fetchResult.url,
@@ -111,6 +122,7 @@ function fetchedPage(fetchResult: FetchResult, structuredData: Record<string, un
     tierUsed: fetchResult.tierUsed,
     html: fetchResult.html,
     structuredData,
+    records,
     artifactId: fetchResult.artifactId,
     error: fetchResult.error,
     get ok() { return fetchResult.success && fetchResult.error === null; },
@@ -183,6 +195,11 @@ export class Kloakd {
 
   /** As crawl(), yielding progress events; the last (`crawl_complete`) carries the result in `metadata.result`. */
   async *crawlStream(url: string, opts: CrawlOrchestratorOptions = {}): AsyncIterable<CrawlProgressEvent> {
+    // A schema the API would refuse fails here, not silently on every page.
+    if (opts.extractItemSelector !== undefined) {
+      if (!opts.extractSchema) throw new Error('Kloakd: extractItemSelector needs extractSchema');
+      toSchemaSpec(opts.extractSchema, opts.extractItemSelector);
+    }
     yield { type: 'discovery_started', url, page: null, total: null, success: null, error: null, metadata: {} };
 
     const crawlOpts: CrawlOptions = { includeExternalLinks: opts.includeExternalLinks ?? false };
@@ -209,19 +226,22 @@ export class Kloakd {
       try {
         const fetchResult = await this.evadr.fetch(node.url, fetchOpts);
         let structuredData: Record<string, unknown> | null = null;
+        let records: Record<string, unknown>[] = [];
         if (opts.extractSchema && fetchResult.ok) {
           try {
             const extraction = await this.kolektr.page(node.url, {
               schema: opts.extractSchema,
+              ...(opts.extractItemSelector !== undefined && { itemSelector: opts.extractItemSelector }),
               ...(fetchResult.artifactId && { fetchArtifactId: fetchResult.artifactId }),
             });
-            structuredData = extraction.records[0] ?? null;
+            records = extraction.records;
+            structuredData = records[0] ?? null;
           } catch (err) {
             if (isFatal(err)) throw err;
             // Any other extraction failure is recorded as no data; the page still has its HTML.
           }
         }
-        page = fetchedPage(fetchResult, structuredData);
+        page = fetchedPage(fetchResult, structuredData, records);
       } catch (err) {
         if (isFatal(err)) throw err;
         page = failedPage(node.url, err instanceof Error ? err.message : String(err));

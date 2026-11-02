@@ -24,11 +24,12 @@ const page = await client.evadr.fetch('https://example.com');
 if (page.ok) console.log(page.statusCode, page.tierUsed, page.html?.length);
 if (page.authRequired) console.log('Login needed; discovery', page.discoveryId);
 
-// Extract structured data.
+// Extract structured data: one record per book on the list page.
 const extraction = await client.kolektr.page('https://books.toscrape.com', {
-  schema: { title: 'css:h3 a', price: '.price_color' },
+  schema: { title: { selector: 'h3 a', attribute: 'title' }, price: '.price_color' },
+  itemSelector: 'article.product_pod',
 });
-console.log(extraction.records);
+console.log(extraction.records); // [{ title: 'A Light in the Attic', price: '£51.77' }, ...]
 ```
 
 ## Options
@@ -80,6 +81,13 @@ const site = await client.crawl('https://example.com', {
   extractSchema: { title: 'css:h1' },
 });
 for (const p of site.pages) if (p.ok) console.log(p.url, p.structuredData);
+
+// One record per item on each page: every record is in p.records.
+const lists = await client.crawl('https://books.toscrape.com', {
+  maxPages: 5,
+  extractSchema: { title: 'css:h3 a', price: '.price_color' },
+  extractItemSelector: 'article.product_pod',
+});
 ```
 
 `maxDepth` and `maxPages` are optional; unset, the API uses your tier's
@@ -88,6 +96,28 @@ and throws on payment, quota, billing, entitlement, authentication and
 rate-limit errors. `client.crawlStream` yields the same work as progress
 events (`discovery_started`, `discovery_complete`, `page_fetching`,
 `page_fetched`, `page_failed`, `crawl_complete`); these are made by the SDK.
+
+### Crawl pages
+
+`client.webgrph.getCrawlPages(crawlId, { cursor, limit, includeGrouping })`
+returns one page of the crawl's tree; pass `nextCursor` back for the next, or
+call `crawlAllPages(crawlId, { limit, includeGrouping })` for all of them.
+
+- `limit` is 1–1000 (the SDK sends 500 when unset; the API's own default is
+  100). Outside that range the SDK throws `RangeError` before sending.
+- A cursor that is not the API's `nextCursor` (a non-negative integer) is a 422.
+- By default only fetched pages are listed, each under the page the crawl found
+  it on, and `total` matches the crawl's `totalPages`. `includeGrouping: true`
+  also lists the tree's display-only grouping folders (`isGrouping` true on
+  those nodes); they were never fetched. `webgrph.crawl(url, { includeGrouping: true })`
+  loads its pages that way.
+- `totalPages` and `maxDepthReached` on a crawl count fetched pages only.
+
+```typescript
+const { nodes, nextCursor, total } = await client.webgrph.getCrawlPages(crawlId, { limit: 1000 });
+const tree = await client.webgrph.crawlAllPages(crawlId, { includeGrouping: true });
+const folders = tree.filter((n) => n.isGrouping);
+```
 
 `client.webgrph.crawlStream(url)` streams the API's own pipeline events
 (`eventType`, `stageId`, `status`, `message`, `progressPct`, `metadata`,
@@ -99,7 +129,39 @@ events (`discovery_started`, `discovery_complete`, `page_fetching`,
 
 - the shorthand `{ field: 'css:selector' }` (the `css:` prefix is optional);
 - a list of fields: `[{ name: 'title', selector: 'h1', attribute: 'title', type: 'text' }]`;
-- the full spec: `{ fields: [...], pagination: true, maxPages: 5 }`.
+- the full spec: `{ fields: [...], itemSelector: 'li.item', pagination: true, maxPages: 5 }`.
+
+A shorthand value may also be `{ selector, attribute, type }`:
+`{ link: { selector: 'a', attribute: 'href' }, tags: { selector: '.tag', type: 'list' } }`.
+
+### One record per item: `itemSelector`
+
+On a list page, `itemSelector` (CSS, sent as `schema_spec.item_selector`) makes
+one record per element it matches, and each field's selector is read inside
+that element:
+
+- the first match gives the value; a field with `type: 'list'` gives every match;
+- `attribute` reads that attribute instead of the text;
+- a field with no match in an item is `null`;
+- a field without a selector is read from the item element itself.
+
+```typescript
+const { records } = await client.kolektr.page('https://books.toscrape.com', {
+  schema: {
+    title: { selector: 'h3 a', attribute: 'title' },
+    price: 'css:p.price_color',
+    link: { selector: 'h3 a', attribute: 'href' },
+  },
+  itemSelector: 'article.product_pod',
+});
+// 20 records, one per book.
+```
+
+It works with every schema form, with `kolektr.extractHtml(html, url, { schema, itemSelector })`,
+and as `extractItemSelector` in `client.crawl`. Without it the response is
+unchanged: the field selectors run against the whole page and give one record.
+The SDK throws before sending for an empty item selector, or one with no
+schema or no fields; the API answers invalid CSS with a 422 (`ApiError`).
 
 ## Chat (Parlyr)
 
@@ -142,7 +204,7 @@ Every error extends `KloakdError` (`statusCode`, `message`, `code`: the API's er
 | `PaymentRequiredError` | 402 `payment_required`: the last payment failed. |
 | `NotEntitledError` | 403 `not_entitled` (`module`) or `tier_access_denied` (`feature`, `currentTier`, `requiredTier`); `upgradeUrl`. |
 | `ForbiddenError` | Any other 403. `NotEntitledError` extends it. |
-| `ConcurrencyLimitError` | 409 `concurrent_limit`: too many crawls running (`concurrentLimit`, `activeCrawls`, `tier`). |
+| `ConcurrencyLimitError` | 409 `concurrent_limit`: every work slot is in use (`tier`, `concurrentLimit`, `activeCrawls`, `activeRequests`). Not retried. |
 | `RateLimitError` | 429 `rate_limited` (`retryAfter`, `resetAt`). `quotaExhausted` is true for the playground quota (`quotaUsed`, `quotaLimit`, `upgradeUrl`). |
 | `QuotaExceededError` | 429 `gb_exhausted`: the plan's GB are used up (`tier`, `upgradeUrl`). |
 | `BillingUnavailableError` | 503 `billing_unavailable`: usage could not be checked; nothing was started. |
@@ -159,7 +221,27 @@ Every error extends `KloakdError` (`statusCode`, `message`, `code`: the API's er
 - Other 5xx and network errors: retried for GET, HEAD and DELETE only, with
   exponential backoff (1 s, 2 s, 4 s, … at most 60 s). POST, PUT and PATCH
   are not retried, since the API may already have done the work.
-- Nothing else is retried.
+- Nothing else is retried, including 409 `concurrent_limit`.
+
+### Work slots (concurrency)
+
+Every metered call holds one of your organisation's work slots while it runs;
+crawls and batches hold one until they finish. Slots per plan: Free 2,
+Starter 5, Pro 10, Pro+ 20, Developer 50, Enterprise 100. A call over the
+limit is refused with 409 `concurrent_limit` and nothing is started:
+
+```typescript
+import { ConcurrencyLimitError } from 'kloakd-sdk';
+
+try {
+  await client.kolektr.page(url, { schema });
+} catch (err) {
+  if (err instanceof ConcurrencyLimitError) {
+    // e.g. tier 'free', 2 slots: 1 crawl or batch running, 1 other request in flight
+    console.log(err.tier, err.concurrentLimit, err.activeCrawls, err.activeRequests);
+  }
+}
+```
 
 ## License
 

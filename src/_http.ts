@@ -11,12 +11,13 @@
  *   - Other 5xx and network errors: GET, HEAD and DELETE only, with
  *     exponential backoff (1 s * 2^attempt). POST, PUT and PATCH are never
  *     retried on these, since the API may already have done the work.
- *   - Never retried: 4xx other than the above, and 429 `gb_exhausted`.
+ *   - Never retried: 4xx other than the above, 429 `gb_exhausted`, and
+ *     409 `concurrent_limit` (every work slot is in use).
  */
 
 import { BillingUnavailableError, KloakdError, RateLimitError, raiseForStatus } from './errors.js';
 
-export const SDK_VERSION = '0.5.0';
+export const SDK_VERSION = '0.6.0';
 export const USER_AGENT = `kloakd-sdk-js/${SDK_VERSION}`;
 const IDEMPOTENT = new Set(['GET', 'HEAD', 'DELETE']);
 const MAX_WAIT_MS = 60_000;

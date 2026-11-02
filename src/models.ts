@@ -81,6 +81,19 @@ export interface PageNode {
   title: string | null;
   statusCode: number | null;
   children: string[];
+  /** The node's parent in the listed tree (by default the page the crawl found it on). */
+  parentUrl?: string | null;
+  /**
+   * A grouping folder of the displayed tree, not a fetched page
+   * (`metadata.is_grouping`). Listed only with `includeGrouping`.
+   */
+  isGrouping?: boolean;
+  /**
+   * The page the crawl found this page on, when the tree files it under a
+   * grouping folder. Stored page records and the `pipeline_complete` event's
+   * pages carry it; the pages listing does not (its parentUrl already is it).
+   */
+  crawlParentUrl?: string | null;
 }
 
 export interface CrawlResult extends Paginated {
@@ -89,7 +102,9 @@ export interface CrawlResult extends Paginated {
   /** queued, crawling, completed, failed or cancelled. */
   status: string;
   url: string;
+  /** Fetched pages only (grouping folders are not counted). */
   totalPages: number;
+  /** Deepest fetched page. */
   maxDepthReached: number;
   pages: PageNode[];
   artifactId: string | null;
@@ -317,7 +332,10 @@ export interface CrawlPage {
   statusCode: number;
   tierUsed: number;
   html: string | null;
+  /** The first extracted record. */
   structuredData: Record<string, unknown> | null;
+  /** Every extracted record (one per item when the schema has an item selector). */
+  records?: Record<string, unknown>[];
   artifactId: string | null;
   error: string | null;
   readonly ok: boolean;

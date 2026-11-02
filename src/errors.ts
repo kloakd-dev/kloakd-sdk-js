@@ -111,17 +111,31 @@ export class RateLimitError extends KloakdError {
   }
 }
 
-/** 409 `concurrent_limit`: too many crawls or jobs are running; start again when one finishes. */
+/**
+ * 409 `concurrent_limit`: every work slot of the organisation is in use.
+ *
+ * Every metered call holds one slot while it runs (crawls and batches until
+ * they finish). Slots per plan: Free 2, Starter 5, Pro 10, Pro+ 20,
+ * Developer 50, Enterprise 100. Not retried: start again when one finishes.
+ */
 export class ConcurrencyLimitError extends KloakdError {
+  /** The plan's slot count. */
   readonly concurrentLimit: number | null;
+  /** Crawls and batches running or queued. */
   readonly activeCrawls: number | null;
+  /** Other requests in flight. */
+  readonly activeRequests: number | null;
   readonly tier: string;
 
-  constructor(message: string, opts: { concurrentLimit?: number | null; activeCrawls?: number | null; tier?: string } = {}) {
+  constructor(
+    message: string,
+    opts: { concurrentLimit?: number | null; activeCrawls?: number | null; activeRequests?: number | null; tier?: string } = {},
+  ) {
     super(message, 409, 'concurrent_limit');
     this.name = 'ConcurrencyLimitError';
     this.concurrentLimit = opts.concurrentLimit ?? null;
     this.activeCrawls = opts.activeCrawls ?? null;
+    this.activeRequests = opts.activeRequests ?? null;
     this.tier = opts.tier ?? '';
   }
 }
@@ -279,6 +293,7 @@ export function raiseForStatus(
     throw new ConcurrencyLimitError(detail, {
       concurrentLimit: num(detailObj['concurrent_limit']),
       activeCrawls: num(detailObj['active_crawls']),
+      activeRequests: num(detailObj['active_requests']),
       tier: str('tier') ?? '',
     });
   }

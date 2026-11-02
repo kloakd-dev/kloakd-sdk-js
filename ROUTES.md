@@ -1,4 +1,4 @@
-# Routes the SDK calls (0.5.0)
+# Routes the SDK calls (0.6.0)
 
 Checked against the API's route list (`tests/fixtures/routes.tsv`, generated
 from kobe-scraper 4fb33ea4 with the module routers mounted as
@@ -105,6 +105,16 @@ route list.
 
 `tests/contract.test.ts` checks that each of the nine methods follows a 202
 through a live poll route.
+
+## Changed in 0.6.0
+
+No route is added or removed (kobe-scraper 0bb0c6b5, deployed 2 November 2026).
+
+| Method | Path | 0.6.0 |
+|---|---|---|
+| POST | kolektr/extract, extract/html | `schema_spec.item_selector` from `itemSelector` (option or `SchemaSpec`); shorthand fields may carry `attribute` and `type` (GAP-API-11) |
+| GET | webgrph/crawl/{id}/pages | `include_grouping=true` from `includeGrouping`; `limit` checked to be 1–1000 before sending; reads `metadata.is_grouping`, `parent_url` (GAP-API-9/10) |
+| * | every metered route | 409 `concurrent_limit` reads `active_requests` (GAP-BILL-13); not retried |
 
 ## Changed in 0.5.0
 

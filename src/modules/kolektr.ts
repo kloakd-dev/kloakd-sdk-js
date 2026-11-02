@@ -23,7 +23,16 @@ function parseExtraction(raw: Record<string, unknown>, url: string): ExtractionR
   return { ...result, get ok() { return result.success && result.error === null; } };
 }
 
-/** A field to extract: a name, and where to find it on the page. */
+/**
+ * A field to extract: a name, and where to find it on the page.
+ *
+ * - `selector`: CSS. With an item selector it is read inside each item
+ *   element; without one, against the whole page. A field with no selector
+ *   is read from the item element itself.
+ * - `attribute`: read this attribute instead of the text (for example `href`).
+ * - `type`: `"list"` gives every match as a list; any other value (default
+ *   `"text"`) gives the first match. No match gives `null`.
+ */
 export interface FieldSpec {
   name: string;
   selector?: string;
@@ -31,39 +40,80 @@ export interface FieldSpec {
   type?: string;
 }
 
-/** The API's extraction schema. */
+/** The API's extraction schema (modules/kolektr/router.py SchemaSpec). */
 export interface SchemaSpec {
   fields: FieldSpec[];
+  /**
+   * CSS selector for the repeated item on a list page (for example
+   * `article.product_pod`): one record per matching element, each field read
+   * inside it. Sent as `item_selector`. Without it the response is one record
+   * for the page, as in 0.5.0. The API answers 422 for an empty or invalid
+   * selector, or an item selector with no fields.
+   */
+  itemSelector?: string;
   pagination?: boolean;
   maxPages?: number;
   outputFormat?: string;
 }
 
+/**
+ * A field in the shorthand: a selector string (`"css:h3 a"`, the `css:`
+ * prefix is optional) or the field's selector, attribute and type.
+ */
+export type ShorthandField = string | Omit<FieldSpec, 'name'>;
+
 /** An extraction schema: the API's spec, a list of fields, or the `{ field: "css:selector" }` shorthand. */
-export type ExtractSchema = SchemaSpec | FieldSpec[] | Record<string, string>;
+export type ExtractSchema = SchemaSpec | FieldSpec[] | Record<string, ShorthandField>;
+
+function stripCss(selector: string): string {
+  return selector.replace(/^css:/, '');
+}
+
+function shorthandField(name: string, value: ShorthandField): FieldSpec {
+  if (typeof value === 'string') return { name, selector: stripCss(value) };
+  const field: FieldSpec = { name };
+  if (value.selector !== undefined) field.selector = stripCss(String(value.selector));
+  if (value.attribute !== undefined) field.attribute = value.attribute;
+  if (value.type !== undefined) field.type = value.type;
+  return field;
+}
 
 /**
  * The extraction schema as the API takes it (`schema_spec`,
  * modules/kolektr/router.py SchemaSpec). Accepts the spec itself, a list of
  * fields, or the shorthand `{ fieldName: "css:selector" }`, whose `css:`
  * prefix is optional and removed.
+ *
+ * `itemSelector` (GAP-API-11) makes one record per element it matches; it
+ * applies to any of the three forms and takes the place of a spec's own
+ * `itemSelector`. Throws for an empty item selector or one with no fields
+ * (the API would answer 422). Invalid CSS is left to the API's 422.
  */
-export function toSchemaSpec(schema: ExtractSchema): Record<string, unknown> {
-  if (Array.isArray(schema)) return { fields: schema };
-  if (Array.isArray((schema as SchemaSpec).fields)) {
+export function toSchemaSpec(schema: ExtractSchema, itemSelector?: string): Record<string, unknown> {
+  let spec: Record<string, unknown>;
+  let specItemSelector: string | undefined;
+  if (Array.isArray(schema)) {
+    spec = { fields: schema };
+  } else if (Array.isArray((schema as SchemaSpec).fields)) {
     const s = schema as SchemaSpec;
-    const spec: Record<string, unknown> = { fields: s.fields };
+    spec = { fields: s.fields };
+    specItemSelector = s.itemSelector ?? (s as unknown as Record<string, string | undefined>)['item_selector'];
     if (s.pagination !== undefined) spec['pagination'] = s.pagination;
     if (s.maxPages !== undefined) spec['max_pages'] = s.maxPages;
     if (s.outputFormat !== undefined) spec['output_format'] = s.outputFormat;
-    return spec;
+  } else {
+    spec = {
+      fields: Object.entries(schema as Record<string, ShorthandField>).map(([name, value]) => shorthandField(name, value)),
+    };
   }
-  return {
-    fields: Object.entries(schema as Record<string, string>).map(([name, selector]) => ({
-      name,
-      selector: String(selector).replace(/^css:/, ''),
-    })),
-  };
+  const selector = itemSelector ?? specItemSelector;
+  if (selector !== undefined) {
+    const trimmed = String(selector).trim();
+    if (!trimmed) throw new Error('Kloakd: itemSelector must not be empty');
+    if ((spec['fields'] as unknown[]).length === 0) throw new Error('Kloakd: itemSelector needs at least one field');
+    spec['item_selector'] = trimmed;
+  }
+  return spec;
 }
 
 /** Extraction options; the poll options apply when the API hands the extraction off as a job (202). */
@@ -74,6 +124,20 @@ export interface PageOptions extends HandoffOptions {
   sessionArtifactId?: string;
   apiMapArtifactId?: string;
   options?: Record<string, unknown>;
+  /** One record per element this CSS selector matches; see `SchemaSpec.itemSelector`. Needs `schema`. */
+  itemSelector?: string;
+}
+
+/** Options for `extractHtml`. */
+export interface ExtractHtmlOptions {
+  schema?: ExtractSchema;
+  /** One record per element this CSS selector matches; see `SchemaSpec.itemSelector`. Needs `schema`. */
+  itemSelector?: string;
+}
+
+function schemaBody(body: Record<string, unknown>, opts: { schema?: ExtractSchema; itemSelector?: string }): void {
+  if (opts.schema) body['schema_spec'] = toSchemaSpec(opts.schema, opts.itemSelector);
+  else if (opts.itemSelector !== undefined) throw new Error('Kloakd: itemSelector needs a schema with at least one field');
 }
 
 export class KolektrNamespace {
@@ -83,10 +147,20 @@ export class KolektrNamespace {
    * Extract structured data from a URL (`POST kolektr/extract`). An
    * extraction still running after about 85 s is handed off as a job (202);
    * this follows it and returns the same result.
+   *
+   * With `itemSelector` a list page gives one record per item:
+   *
+   * ```ts
+   * const r = await kloakd.kolektr.page('https://books.toscrape.com/', {
+   *   schema: { title: { selector: 'h3 a', attribute: 'title' }, price: 'css:p.price_color' },
+   *   itemSelector: 'article.product_pod',
+   * });
+   * r.records; // [{ title: 'A Light in the Attic', price: '£51.77' }, ...] — one per book
+   * ```
    */
   async page(url: string, opts: PageOptions = {}): Promise<ExtractionResult> {
     const body: Record<string, unknown> = { url };
-    if (opts.schema) body['schema_spec'] = toSchemaSpec(opts.schema);
+    schemaBody(body, opts);
     if (opts.level) body['level'] = opts.level;
     if (opts.fetchArtifactId) body['fetch_artifact_id'] = opts.fetchArtifactId;
     if (opts.sessionArtifactId) body['session_artifact_id'] = opts.sessionArtifactId;
@@ -100,13 +174,14 @@ export class KolektrNamespace {
     return (await this.page(url, opts)).records;
   }
 
+  /** Extract from HTML you already have (`POST kolektr/extract/html`); `itemSelector` as in `page`. */
   async extractHtml(
     html: string,
     url: string,
-    opts: { schema?: ExtractSchema } = {},
+    opts: ExtractHtmlOptions = {},
   ): Promise<ExtractionResult> {
     const body: Record<string, unknown> = { html, url };
-    if (opts.schema) body['schema_spec'] = toSchemaSpec(opts.schema);
+    schemaBody(body, opts);
     const raw = await this._t.post('kolektr/extract/html', body);
     return parseExtraction(raw, url);
   }

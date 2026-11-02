@@ -12,7 +12,38 @@ function parsePageNode(n: Record<string, unknown>): PageNode {
     title: (metadata['title'] as string | undefined) ?? (n['title'] as string | undefined) ?? null,
     statusCode: n['status_code'] != null ? Number(n['status_code']) : null,
     children: (n['children_urls'] as string[] | undefined) ?? (n['children'] as string[] | undefined) ?? [],
+    parentUrl: (n['parent_url'] as string | undefined) ?? null,
+    isGrouping: Boolean(metadata['is_grouping'] ?? n['is_grouping'] ?? false),
+    crawlParentUrl:
+      (metadata['crawl_parent_url'] as string | undefined) ?? (n['crawl_parent_url'] as string | undefined) ?? null,
   };
+}
+
+/** The pages endpoint's default page size (modules/webgrph/router.py PAGES_DEFAULT_LIMIT). */
+export const CRAWL_PAGES_DEFAULT_LIMIT = 100;
+/** The pages endpoint's largest page size (modules/webgrph/router.py PAGES_MAX_LIMIT); more is a 422. */
+export const CRAWL_PAGES_MAX_LIMIT = 1000;
+
+/** Options for `getCrawlPages`. */
+export interface CrawlPagesOptions {
+  /** `nextCursor` from the previous page: a non-negative integer as a string (anything else is a 422). */
+  cursor?: string;
+  /** Nodes per page, 1–1000. The SDK sends 500 when unset (the API's own default is 100). */
+  limit?: number;
+  /**
+   * Also list the tree's grouping folders (`isGrouping` true). They were not
+   * fetched; by default only fetched pages are listed, each under the page
+   * the crawl found it on, and `total` matches the crawl's `total_pages`.
+   */
+  includeGrouping?: boolean;
+}
+
+function checkPagesOptions(opts: CrawlPagesOptions): void {
+  if (opts.limit !== undefined) {
+    if (!Number.isInteger(opts.limit) || opts.limit < 1 || opts.limit > CRAWL_PAGES_MAX_LIMIT) {
+      throw new RangeError(`Kloakd: limit must be an integer from 1 to ${CRAWL_PAGES_MAX_LIMIT}, got ${opts.limit}`);
+    }
+  }
 }
 
 const FINISHED = new Set(['completed', 'failed', 'cancelled']);
@@ -31,6 +62,8 @@ export interface CrawlOptions {
   budget?: Record<string, unknown>;
   /** Wait for the crawl to finish and load its pages (default true). */
   wait?: boolean;
+  /** When waiting, also load the grouping folders (see `CrawlPagesOptions.includeGrouping`). Not sent with the crawl. */
+  includeGrouping?: boolean;
   pollIntervalMs?: number;
   /** How long to wait for the crawl before JobTimeoutError. Default 30 minutes. */
   timeoutMs?: number;
@@ -74,7 +107,11 @@ export class WebgrphNamespace {
     if (status['status'] === 'failed') {
       throw new JobFailedError(String(status['error'] ?? 'Crawl failed'), crawlId);
     }
-    return crawlResult(status, url, await this.crawlAllPages(crawlId));
+    return crawlResult(
+      status,
+      url,
+      await this.crawlAllPages(crawlId, opts.includeGrouping ? { includeGrouping: true } : {}),
+    );
   }
 
   /** Every page node of a finished crawl. */
@@ -110,13 +147,21 @@ export class WebgrphNamespace {
     );
   }
 
-  /** One page of a crawl's hierarchy; pass `nextCursor` back for the next. */
+  /**
+   * One page of a crawl's hierarchy; pass `nextCursor` back for the next.
+   * By default only fetched pages are listed; `includeGrouping` adds the
+   * display-only grouping folders. Throws RangeError for a limit outside
+   * 1–1000; a cursor that is not a non-negative integer is the API's 422
+   * (ApiError).
+   */
   async getCrawlPages(
     crawlId: string,
-    opts: { cursor?: string; limit?: number } = {},
+    opts: CrawlPagesOptions = {},
   ): Promise<{ crawlId: string; nodes: PageNode[]; nextCursor: string | null; total: number }> {
+    checkPagesOptions(opts);
     const params: Record<string, string> = { limit: String(opts.limit ?? 500) };
     if (opts.cursor) params['cursor'] = opts.cursor;
+    if (opts.includeGrouping) params['include_grouping'] = 'true';
     const raw = await this._t.get(`webgrph/crawl/${seg(crawlId)}/pages`, params);
     return {
       crawlId: String(raw['crawl_id'] ?? crawlId),
@@ -126,12 +171,12 @@ export class WebgrphNamespace {
     };
   }
 
-  /** Every page node of a crawl, following the cursor. */
-  async crawlAllPages(crawlId: string): Promise<PageNode[]> {
+  /** Every page node of a crawl, following the cursor (`limit` and `includeGrouping` as in `getCrawlPages`). */
+  async crawlAllPages(crawlId: string, opts: Omit<CrawlPagesOptions, 'cursor'> = {}): Promise<PageNode[]> {
     const all: PageNode[] = [];
     let cursor: string | undefined;
     do {
-      const page = await this.getCrawlPages(crawlId, cursor ? { cursor } : {});
+      const page = await this.getCrawlPages(crawlId, cursor ? { ...opts, cursor } : { ...opts });
       all.push(...page.nodes);
       cursor = page.nextCursor ?? undefined;
     } while (cursor);

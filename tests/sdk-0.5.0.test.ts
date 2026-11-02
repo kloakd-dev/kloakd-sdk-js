@@ -53,17 +53,17 @@ const calls = (f: Recorder) => f.mock.calls as unknown as unknown[][];
 const methodOf = (c: unknown[]) => (c[1] as RequestInit).method;
 
 describe('version and headers', () => {
-  it('is 0.5.0 and sends User-Agent kloakd-sdk-js/0.5.0', async () => {
-    expect(SDK_VERSION).toBe('0.5.0');
-    expect(USER_AGENT).toBe('kloakd-sdk-js/0.5.0');
+  it('is the package version and sends User-Agent kloakd-sdk-js/<version> (0.6.0 since 2 Nov 2026)', async () => {
+    expect(SDK_VERSION).toBe('0.6.0');
+    expect(USER_AGENT).toBe('kloakd-sdk-js/0.6.0');
     const pkg = JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf8')) as { version: string; exports: Record<string, Record<string, string>> };
     expect(pkg.version).toBe(SDK_VERSION);
     expect(Object.keys(pkg.exports['.']!)[0]).toBe('types');
     const f = answers({ status: 200, body: {} });
     await client(f).evadr.scan('u');
     const headers = (calls(f)[0]![1] as { headers: Record<string, string> }).headers;
-    expect(headers['User-Agent']).toBe('kloakd-sdk-js/0.5.0');
-    expect(headers['X-Kloakd-SDK']).toBe('typescript/0.5.0');
+    expect(headers['User-Agent']).toBe('kloakd-sdk-js/0.6.0');
+    expect(headers['X-Kloakd-SDK']).toBe('typescript/0.6.0');
   });
 });
 
