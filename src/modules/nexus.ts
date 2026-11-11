@@ -3,8 +3,6 @@ import { postFollowingHandoff } from '../_handoff.js';
 import type { HandoffOptions } from '../_handoff.js';
 import type {
   NexusAnalyzeResult,
-  NexusExecuteResult,
-  NexusKnowledgeResult,
   NexusSynthesisResult,
   NexusVerifyResult,
 } from '../models.js';
@@ -15,9 +13,13 @@ function artifactIdOf(raw: Record<string, unknown>): string | null {
 }
 
 /**
- * NEXUS. `analyze`, `synthesize` and `execute` may run past the API's
- * synchronous limit; the API then hands them off as a job (202) and these
- * methods follow it to the same result (poll options: HandoffOptions).
+ * NEXUS. `analyze` and `synthesize` may run past the API's synchronous
+ * limit; the API then hands them off as a job (202) and these methods
+ * follow it to the same result (poll options: HandoffOptions).
+ *
+ * There is no `execute`: the API removed `nexus/execute` (the Strategy
+ * Engine does not execute; extraction runs through `kolektr` and
+ * `webgrph.crawlExtract`). `nexus/knowledge` is not part of the public API.
  */
 export class NexusNamespace {
   constructor(private readonly _t: HttpTransport) {}
@@ -62,59 +64,29 @@ export class NexusNamespace {
     return { ...result, get ok() { return result.error === null; } };
   }
 
+  /**
+   * Check a synthesized strategy against the safety rules
+   * (modules/nexus/router.py VerifyResponse).
+   */
   async verify(strategyId: string): Promise<NexusVerifyResult> {
     const raw = await this._t.post('nexus/verify', { strategy_id: strategyId });
     const result = {
       strategyId: String(raw['strategy_id'] ?? strategyId),
       verified: Boolean(raw['verified']),
+      status: (raw['status'] as string | undefined) ?? null,
       safetyScore: Number(raw['safety_score'] ?? 0),
+      riskScore: Number(raw['risk_score'] ?? 0),
       violations: (raw['violations'] as string[] | undefined) ?? [],
+      safetyChecks: ((raw['safety_checks'] as Record<string, unknown>[] | undefined) ?? []).map((c) => ({
+        property: String(c['property'] ?? ''),
+        passed: Boolean(c['passed']),
+        details: String(c['details'] ?? ''),
+      })),
+      verificationResultId: (raw['verification_result_id'] as string | undefined) ?? null,
+      durationMs: Number(raw['duration_ms'] ?? 0),
       error: (raw['error'] as string | undefined) ?? null,
     };
     return { ...result, get ok() { return result.verified && result.error === null; } };
-  }
-
-  /**
-   * Execute a verified strategy and return its records. The result's
-   * `executionResultId` is the id to pass to `knowledge()`.
-   */
-  async execute(
-    strategyId: string,
-    url: string,
-    opts: { options?: Record<string, unknown> } & HandoffOptions = {},
-  ): Promise<NexusExecuteResult> {
-    const body: Record<string, unknown> = { strategy_id: strategyId, url };
-    if (opts.options) body['options'] = opts.options;
-    const raw = await postFollowingHandoff(this._t, 'nexus/execute', body, opts);
-    const result = {
-      url: (raw['url'] as string | undefined) ?? url,
-      strategyId: String(raw['strategy_id'] ?? strategyId),
-      success: Boolean(raw['success']),
-      records: (raw['records'] as Record<string, unknown>[] | undefined) ?? [],
-      artifactId: artifactIdOf(raw),
-      durationMs: Number(raw['duration_ms'] ?? 0),
-      executionResultId: (raw['execution_result_id'] as string | undefined) ?? null,
-      error: (raw['error_message'] as string | undefined) ?? null,
-    };
-    return { ...result, get ok() { return result.success && result.error === null; } };
-  }
-
-  /**
-   * Learn from an execution result (Knowledge Layer). `executionResultId`
-   * is `executionResultId` on the result of `execute()` (the API's
-   * `execution_result_id`, the same value as that result's `artifactId`).
-   */
-  async knowledge(executionResultId: string): Promise<NexusKnowledgeResult> {
-    const raw = await this._t.post('nexus/knowledge', { execution_result_id: executionResultId });
-    const result = {
-      executionResultId: String(raw['execution_result_id'] ?? executionResultId),
-      learnedConcepts: (raw['learned_concepts'] as Record<string, unknown>[] | undefined) ?? [],
-      patterns: (raw['patterns'] as Record<string, unknown>[] | undefined) ?? [],
-      totalPatterns: Number(raw['total_patterns'] ?? 0),
-      durationMs: Number(raw['duration_ms'] ?? 0),
-      error: (raw['error'] as string | undefined) ?? null,
-    };
-    return { ...result, get ok() { return result.error === null; } };
   }
 
   /**

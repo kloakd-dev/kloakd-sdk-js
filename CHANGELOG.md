@@ -3,6 +3,36 @@
 All notable changes to the KLOAKD TypeScript/JavaScript SDK are documented here.
 Only 0.1.0 and 0.4.0 were published to npm before 0.5.0; 0.2.0 and 0.3.0 were never released there.
 
+## [Unreleased]
+
+For the API on kobe-scraper integration/2026-11-12 (e5e358aa). **Breaking**:
+two methods are removed, so the next release is 0.7.0.
+
+### Removed
+- `nexus.execute` and `NexusExecuteResult`: the API removed
+  `POST nexus/execute`; the call could only fail.
+- `nexus.knowledge` and `NexusKnowledgeResult`: the route now takes
+  `{strategy_id, url, outcome}` (the old `{execution_result_id}` body is
+  refused) and is not part of the public API reference.
+
+### Added
+- Crawl, extract and download in one job (`webgrph`): `startCrawlExtract`,
+  `crawlExtract`, `getCrawlExtract`, `waitForCrawlExtract`,
+  `getCrawlExtractResults`, `iterCrawlExtractResults`,
+  `crawlExtractAllResults`, `getCrawlExtractPages`, `exportCrawlExtract`
+  (stream), `downloadCrawlExtract` (file, Node only), `cancelCrawlExtract`.
+  Types `CrawlExtractJob`, `CrawlExtractStatus`, `CrawlExtractRow`,
+  `CrawlExtractResultsPage`, `CrawlExtractPage`, `CrawlExtractPagesPage`,
+  `CrawlExtractCancelResult`, `CrawlExtractSpec`, `ExportFormat`,
+  `ExportDownload`, `SavedExport`; `CRAWL_EXTRACT_MAX_LIMIT`.
+- `client.exportBatchJob` and `client.downloadBatchJob`: a batch job's
+  results as json, ndjson or csv.
+- `NexusVerifyResult.status`, `riskScore`, `safetyChecks`,
+  `verificationResultId`, `durationMs`.
+
+### Changed
+- Exports are streamed and sent without the per-request timeout.
+
 ## [0.6.0] — 2026-11-03
 
 For the API deployed on 2 November 2026 (kobe-scraper 0bb0c6b5). Nothing is

@@ -106,6 +106,28 @@ route list.
 `tests/contract.test.ts` checks that each of the nine methods follows a 202
 through a live poll route.
 
+## Changed after 0.6.0 (unreleased)
+
+Checked against kobe-scraper integration/2026-11-12 (e5e358aa). The route
+list fixture was edited by hand for these routes: POST nexus/execute removed,
+the six crawl-extract routes and the batch export added.
+
+| Method | Path | After 0.6.0 |
+|---|---|---|
+| POST | nexus/execute | the API removed the route; `nexus.execute` and `NexusExecuteResult` are removed |
+| POST | nexus/knowledge | the body is now `{strategy_id, url, outcome}` and the route is not in the public API reference; `nexus.knowledge` and `NexusKnowledgeResult` are removed |
+| POST | nexus/verify | also reads `status`, `risk_score`, `safety_checks`, `verification_result_id`, `duration_ms` |
+| POST | webgrph/crawl-extract | `startCrawlExtract` / `crawlExtract`; body `{url, max_depth?, max_pages?, include_external_links?, session_artifact_id?, capture_mode?, scope?, budget?, extract?: {entity_type?, fields?, schema?}}`; answers 202 |
+| GET | webgrph/crawl-extract/{job_id} | `getCrawlExtract`, `waitForCrawlExtract` |
+| GET | webgrph/crawl-extract/{job_id}/results | `getCrawlExtractResults`, `iterCrawlExtractResults`, `crawlExtractAllResults`; `limit` (1–1000), `cursor`, `shape`, `page_type`, `kind`; follows `next_cursor` |
+| GET | webgrph/crawl-extract/{job_id}/pages | `getCrawlExtractPages`; `limit` (1–1000), `offset`, `status` |
+| GET | webgrph/crawl-extract/{job_id}/export | `exportCrawlExtract` (stream), `downloadCrawlExtract` (file); `format=json\|ndjson\|csv`, `shape`, `page_type`, `kind`; reads `X-Job-Status` and the `Content-Disposition` file name |
+| POST | webgrph/crawl-extract/{job_id}/cancel | `cancelCrawlExtract`; 409 once the job has ended |
+| GET | batch-jobs/{batch_job_id}/export | `client.exportBatchJob`, `client.downloadBatchJob`; `format=json\|ndjson\|csv` |
+
+The 202 hand-off is now followed by eight methods (`nexus.execute` is gone).
+The API also hands off POST scraping/unified; the SDK has no method for it.
+
 ## Changed in 0.6.0
 
 No route is added or removed (kobe-scraper 0bb0c6b5, deployed 2 November 2026).

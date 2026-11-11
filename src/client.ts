@@ -22,6 +22,7 @@
 
 import { HttpTransport } from './_http.js';
 import { getHandoff, waitForHandoff } from './_handoff.js';
+import { checkExportFormat, openExport, saveExport } from './_download.js';
 import type { HandoffOptions } from './_handoff.js';
 import {
   AuthenticationError,
@@ -41,7 +42,16 @@ import { ParlyrNamespace } from './modules/parlyr.js';
 import { SkanyrNamespace } from './modules/skanyr.js';
 import { WebgrphNamespace } from './modules/webgrph.js';
 import type { CrawlOptions } from './modules/webgrph.js';
-import type { CrawlPage, CrawlProgressEvent, CrawlResult, FetchResult, SiteCrawlResult } from './models.js';
+import type {
+  CrawlPage,
+  CrawlProgressEvent,
+  CrawlResult,
+  ExportDownload,
+  ExportFormat,
+  FetchResult,
+  SavedExport,
+  SiteCrawlResult,
+} from './models.js';
 
 const DEFAULT_BASE_URL = 'https://api.kloakd.dev';
 /**
@@ -178,6 +188,23 @@ export class Kloakd {
    */
   async waitForHandoff(jobId: string, opts: HandoffOptions = {}): Promise<Record<string, unknown>> {
     return waitForHandoff(this._transport, jobId, opts);
+  }
+
+  /**
+   * Download a batch job's results as a stream
+   * (`GET batch-jobs/{batch_job_id}/export`; `format`: json, ndjson or csv,
+   * default json). One row per extracted item; a batch still running
+   * exports the results it has. 404 for a batch that is not yours.
+   */
+  async exportBatchJob(batchJobId: string, opts: { format?: ExportFormat } = {}): Promise<ExportDownload> {
+    const format = checkExportFormat(opts.format);
+    return openExport(this._transport, `batch-jobs/${encodeURIComponent(batchJobId)}/export`, { format });
+  }
+
+  /** Download a batch job's results to a file, written as it arrives (Node.js only). */
+  async downloadBatchJob(batchJobId: string, filePath: string, opts: { format?: ExportFormat } = {}): Promise<SavedExport> {
+    const format = checkExportFormat(opts.format);
+    return saveExport(this._transport, `batch-jobs/${encodeURIComponent(batchJobId)}/export`, { format }, filePath);
   }
 
   /**

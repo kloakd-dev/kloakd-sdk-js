@@ -173,12 +173,22 @@ export class HttpTransport {
     return new Uint8Array(await resp.arrayBuffer());
   }
 
+  /**
+   * GET a streamed download and return the response with its body unread.
+   * Sent with the retry policy above but without the per-request timeout: a
+   * large export may stream for longer than `timeout`.
+   */
+  async getStream(path: string, params?: Record<string, string>): Promise<Response> {
+    return this.fetchWithRetry('GET', this.url(path), undefined, params, false);
+  }
+
   /** Send with the retry policy above; returns the first 2xx response. */
   private async fetchWithRetry(
     method: string,
     url: string,
     body?: Record<string, unknown>,
     params?: Record<string, string>,
+    timed = true,
   ): Promise<Response> {
     let fullUrl = url;
     if (params && Object.keys(params).length > 0) {
@@ -187,12 +197,9 @@ export class HttpTransport {
     const upper = method.toUpperCase();
 
     for (let attempt = 0; ; attempt++) {
-      const init: RequestInit = {
-        method: upper,
-        headers: this.authHeaders(),
-        // Each attempt gets its own timeout (seconds, `timeout` option).
-        signal: AbortSignal.timeout(this._timeout * 1000),
-      };
+      const init: RequestInit = { method: upper, headers: this.authHeaders() };
+      // Each attempt gets its own timeout (seconds, `timeout` option).
+      if (timed) init.signal = AbortSignal.timeout(this._timeout * 1000);
       if (body !== undefined) init.body = JSON.stringify(body);
 
       try {

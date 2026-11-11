@@ -7,9 +7,8 @@
  *
  *   - `evadr/fetch` polls `…/evadr/jobs/{job_id}`;
  *   - `kolektr/extract`, `fetchyr/authenticate`, `fetchyr/form/detect`,
- *     `fetchyr/form/fill`, `fetchyr/mfa/detect`, `nexus/analyze`,
- *     `nexus/synthesize` and `nexus/execute` poll
- *     `…/handoff/{job_id}`.
+ *     `fetchyr/form/fill`, `fetchyr/mfa/detect`, `nexus/analyze` and
+ *     `nexus/synthesize` poll `…/handoff/{job_id}`.
  *
  * Either poll answers `{status, result?, error?}`: `completed` carries the
  * route's own 200 body as `result`, `failed` carries `error`, anything else

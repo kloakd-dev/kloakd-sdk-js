@@ -48,7 +48,7 @@ A synchronous route still running after about 85 s answers 202 and keeps
 working as a job. These methods follow the job and return the same result
 as a direct answer: `evadr.fetch`, `kolektr.page` / `pageAll`,
 `fetchyr.authenticate`, `detectForms`, `fillForm`, `detectMfa`,
-`nexus.analyze`, `synthesize`, `execute`. Each takes `pollIntervalMs`
+`nexus.analyze`, `synthesize`. Each takes `pollIntervalMs`
 (default 3000, backing off to 15 s) and `pollTimeoutMs` (default 15 minutes).
 
 When the wait runs out the SDK throws `JobTimeoutError`; its `jobId` lets you
@@ -123,6 +123,44 @@ const folders = tree.filter((n) => n.isGrouping);
 (`eventType`, `stageId`, `status`, `message`, `progressPct`, `metadata`,
 `error`, `sequence`, plus `crawlId`).
 
+## Crawl, extract and download
+
+One job crawls a site, extracts every page and keeps the rows for download.
+It needs a plan with Kolektr, and a live key (a test key is refused).
+
+```typescript
+const job = await client.webgrph.startCrawlExtract('https://shop.example/', {
+  maxPages: 200,
+  extract: { fields: ['title', 'price'] },
+});
+
+const done = await client.webgrph.waitForCrawlExtract(job.jobId);
+console.log(done.status, done.progress.items, done.shapes);
+
+// Rows, 100 a page by default (1–1000), following next_cursor:
+for await (const row of client.webgrph.iterCrawlExtractResults(job.jobId, { kind: 'item' })) {
+  console.log(row.pageUrl, row.data);
+}
+
+// The whole set as a file (json, ndjson or csv), streamed to disk:
+const saved = await client.webgrph.downloadCrawlExtract(job.jobId, 'rows.csv', { format: 'csv' });
+console.log(saved.bytes, saved.jobStatus);
+```
+
+`crawlExtract(url, options)` starts the job and waits for it; a failed job
+throws `JobFailedError`, a cancelled one is returned. `exportCrawlExtract`
+returns the response body as a `ReadableStream` (`body`, `contentType`,
+`filename`, `jobStatus`) for runtimes without a file system;
+`downloadCrawlExtract` needs Node. An export of a job that is still running,
+or that failed, holds the rows written so far: check `jobStatus`.
+`getCrawlExtractPages` lists each page with its status and method;
+`cancelCrawlExtract` stops a job (409 once it has ended). Exports have no
+per-request timeout.
+
+`client.exportBatchJob(batchJobId, { format })` and
+`client.downloadBatchJob(batchJobId, path, { format })` do the same for a
+batch job's results.
+
 ## Extraction schemas
 
 `schema` (and `extractSchema`) accepts:
@@ -184,13 +222,13 @@ Event types: `thinking`, `interpretation`, `progress`, `results`, `error`,
 | Namespace | Methods |
 |---|---|
 | `evadr` | `fetch`, `fetchAsync`, `waitForJob`, `fetchStream`, `getJob`, `jobEvents`, `analyze`, `scan`, `profile`, `listVendors`, `listProxies`, `storeProxy`, `deleteProxy` |
-| `webgrph` | `startCrawl`, `crawl`, `crawlAll`, `crawlStream`, `getCrawlStatus`, `cancelCrawl`, `crawlEvents`, `getCrawlPages`, `crawlAllPages`, `readerView`, `detectedApis`, `listSessions`, `saveSession`, `getSession`, `deleteSession`, `endSession`, `updateSessionJob` |
+| `webgrph` | `startCrawl`, `crawl`, `crawlAll`, `crawlStream`, `getCrawlStatus`, `cancelCrawl`, `crawlEvents`, `getCrawlPages`, `crawlAllPages`, `startCrawlExtract`, `crawlExtract`, `getCrawlExtract`, `waitForCrawlExtract`, `getCrawlExtractResults`, `iterCrawlExtractResults`, `crawlExtractAllResults`, `getCrawlExtractPages`, `exportCrawlExtract`, `downloadCrawlExtract`, `cancelCrawlExtract`, `readerView`, `detectedApis`, `listSessions`, `saveSession`, `getSession`, `deleteSession`, `endSession`, `updateSessionJob` |
 | `skanyr` | `listSites`, `siteFromCrawl`, `getSite`, `updateSite`, `deleteSite`, `sync`, `exportSite`, `getSiteApis`, `getSiteResources`, `searchSite`, `getFindings`, `getTechnologies`, `getTechnologyEvidence`, `listSnapshots`, `getTimeline`, `getTimelineSnapshot`, `diff`, `getGraph`, `getGraphStats`, `getSubgraph`, `listResources`, `getResource`, `search`, `extract`, `getExtractionText`, `getExtractionStructure` |
-| `nexus` | `analyze`, `synthesize`, `verify`, `execute`, `knowledge`, `reason` |
+| `nexus` | `analyze`, `synthesize`, `verify`, `reason` |
 | `parlyr` | `parse`, `chat`, `chatStream`, `deleteSession` |
 | `fetchyr` | `storeCredentials`, `listCredentials`, `deleteCredentials`, `authenticate`, `listSessions`, `invalidateSession`, `terminateSession`, `createWorkflow`, `listWorkflows`, `getWorkflow`, `updateWorkflow`, `deleteWorkflow`, `getWorkflowStatistics`, `executeWorkflow`, `getExecution`, `resumeExecution`, `createMultiSiteWorkflow`, `detectForms`, `fillForm`, `detectMfa`, `submitMfa`, `listMfaChallenges`, `getMfaChallenge`, `getMfaStatistics`, `checkDuplicate`, `createDedupSession`, `listDedupSessions`, `getDedupSession`, `getDedupSessionStatistics`, `getDedupDomainStatistics`, `discoverAuthChain`, `getAuthChainStatus`, `resumeAuthChainCredentials`, `resumeAuthChainMfa` |
 | `kolektr` | `page`, `pageAll`, `extractHtml`, `getApiData`, `getApiDataPaginated`, `extractAllApiData`, `listContent`, `getContent`, `deleteContent`, `listJobs`, `getJob`, `getJobStatus`, `listScrapers`, `createScraper`, `getScraper`, `updateScraper`, `deleteScraper` |
-| client | `crawl`, `crawlStream`, `getHandoff`, `waitForHandoff` |
+| client | `crawl`, `crawlStream`, `getHandoff`, `waitForHandoff`, `exportBatchJob`, `downloadBatchJob` |
 
 `ROUTES.md` lists the API route behind each call.
 

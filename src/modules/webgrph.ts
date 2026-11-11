@@ -1,7 +1,25 @@
 import type { HttpTransport } from '../_http.js';
-import { seg } from '../_params.js';
+import { query, seg } from '../_params.js';
 import { JobFailedError, JobTimeoutError } from '../errors.js';
-import type { CrawlEvent, CrawlResult, PageNode } from '../models.js';
+import type {
+  CrawlEvent,
+  CrawlExtractCancelResult,
+  CrawlExtractJob,
+  CrawlExtractLinks,
+  CrawlExtractPage,
+  CrawlExtractPagesPage,
+  CrawlExtractResultsPage,
+  CrawlExtractRow,
+  CrawlExtractSpec,
+  CrawlExtractStatus,
+  CrawlResult,
+  ExportDownload,
+  ExportFormat,
+  PageNode,
+  SavedExport,
+} from '../models.js';
+import { checkExportFormat, openExport, saveExport } from '../_download.js';
+
 import { parsePipelineEvent } from '../_events.js';
 
 function parsePageNode(n: Record<string, unknown>): PageNode {
@@ -67,6 +85,152 @@ export interface CrawlOptions {
   pollIntervalMs?: number;
   /** How long to wait for the crawl before JobTimeoutError. Default 30 minutes. */
   timeoutMs?: number;
+}
+
+// ── Crawl-extract ───────────────────────────────────────────────────────────
+
+/** The results and pages routes' largest page size (crawl_extract_router.py); more is a 422. */
+export const CRAWL_EXTRACT_MAX_LIMIT = 1000;
+
+/** Options for `startCrawlExtract` / `crawlExtract` (crawl_extract_router.py CrawlExtractRequest). */
+export interface CrawlExtractOptions {
+  /** Unset: the tier's maximum; a given value is clamped to it. */
+  maxDepth?: number;
+  /** Unset: the tier's maximum; a given value is clamped to it. */
+  maxPages?: number;
+  includeExternalLinks?: boolean;
+  sessionArtifactId?: string;
+  captureMode?: string;
+  scope?: Record<string, unknown>;
+  budget?: Record<string, unknown>;
+  /** What to extract from each page. */
+  extract?: CrawlExtractSpec;
+}
+
+/** How `waitForCrawlExtract` / `crawlExtract` poll. */
+export interface CrawlExtractWaitOptions {
+  /** Default 3000 ms. */
+  pollIntervalMs?: number;
+  /** How long to wait before JobTimeoutError. Default 60 minutes. */
+  timeoutMs?: number;
+}
+
+/** Filters shared by the results and the export. */
+export interface CrawlExtractFilters {
+  /** A `shape` from the job's status (`shapes[].shape`): rows with that set of fields. */
+  shape?: string;
+  pageType?: string;
+  /** `item` rows only, or `page` rows only. */
+  kind?: 'item' | 'page';
+}
+
+export interface CrawlExtractResultsOptions extends CrawlExtractFilters {
+  /** Rows per page, 1–1000 (the API's default is 100). */
+  limit?: number;
+  /** `nextCursor` of the page before. */
+  cursor?: string;
+}
+
+export interface CrawlExtractPagesOptions {
+  /** Pages per call, 1–1000 (the API's default is 100). */
+  limit?: number;
+  offset?: number;
+  status?: 'extracted' | 'failed';
+}
+
+export interface CrawlExtractExportOptions extends CrawlExtractFilters {
+  /** Default `json`. */
+  format?: ExportFormat;
+}
+
+function checkLimit(limit: number | undefined): void {
+  if (limit !== undefined && (!Number.isInteger(limit) || limit < 1 || limit > CRAWL_EXTRACT_MAX_LIMIT)) {
+    throw new RangeError(`Kloakd: limit must be an integer from 1 to ${CRAWL_EXTRACT_MAX_LIMIT}, got ${limit}`);
+  }
+}
+
+const str = (v: unknown): string | null => (v === undefined || v === null ? null : String(v));
+
+function parseLinks(raw: unknown): CrawlExtractLinks | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const l = raw as Record<string, unknown>;
+  return {
+    status: String(l['status'] ?? ''),
+    results: String(l['results'] ?? ''),
+    pages: String(l['pages'] ?? ''),
+    cancel: String(l['cancel'] ?? ''),
+    export: (l['export'] as Record<string, string> | undefined) ?? {},
+    crawlEvents: String(l['crawl_events'] ?? ''),
+    events: String(l['events'] ?? ''),
+  };
+}
+
+function parseCrawlExtractStatus(raw: Record<string, unknown>, jobId: string): CrawlExtractStatus {
+  const progress = (raw['progress'] as Record<string, unknown> | undefined) ?? {};
+  const status = {
+    jobId: String(raw['job_id'] ?? jobId),
+    crawlId: String(raw['crawl_id'] ?? ''),
+    url: String(raw['url'] ?? ''),
+    status: String(raw['status'] ?? ''),
+    cancelRequested: Boolean(raw['cancel_requested']),
+    progress: {
+      pagesCrawled: Number(progress['pages_crawled'] ?? 0),
+      pagesTotal: progress['pages_total'] != null ? Number(progress['pages_total']) : null,
+      pagesExtracted: Number(progress['pages_extracted'] ?? 0),
+      pagesFailed: Number(progress['pages_failed'] ?? 0),
+      items: Number(progress['items'] ?? 0),
+    },
+    error: str(raw['error']),
+    errorCode: str(raw['error_code']),
+    request: (raw['request'] as Record<string, unknown> | undefined) ?? {},
+    createdAt: str(raw['created_at']),
+    startedAt: str(raw['started_at']),
+    completedAt: str(raw['completed_at']),
+    updatedAt: str(raw['updated_at']),
+    links: parseLinks(raw['links']),
+    pagesByMethod: (raw['pages_by_method'] as Record<string, number> | undefined) ?? {},
+    shapes: ((raw['shapes'] as Record<string, unknown>[] | undefined) ?? []).map((s) => ({
+      shape: String(s['shape'] ?? ''),
+      kind: String(s['kind'] ?? ''),
+      rows: Number(s['rows'] ?? 0),
+      pageTypes: (s['page_types'] as string[] | undefined) ?? [],
+      fields: (s['fields'] as string[] | undefined) ?? [],
+    })),
+  };
+  return {
+    ...status,
+    get finished() { return FINISHED.has(status.status); },
+    get ok() { return status.status === 'completed'; },
+  };
+}
+
+function parseCrawlExtractRow(r: Record<string, unknown>): CrawlExtractRow {
+  return {
+    pageUrl: String(r['page_url'] ?? ''),
+    pageType: str(r['page_type']),
+    rowKind: String(r['row_kind'] ?? ''),
+    itemIndex: Number(r['item_index'] ?? 0),
+    data: (r['data'] as Record<string, unknown> | undefined) ?? {},
+    shape: str(r['shape']),
+  };
+}
+
+function parseCrawlExtractPage(p: Record<string, unknown>): CrawlExtractPage {
+  return {
+    pageSeq: Number(p['page_seq'] ?? 0),
+    pageUrl: String(p['page_url'] ?? ''),
+    pageType: str(p['page_type']),
+    title: str(p['title']),
+    status: String(p['status'] ?? ''),
+    method: str(p['method']),
+    itemCount: Number(p['item_count'] ?? 0),
+    detail: p['detail'] ?? null,
+    extractedAt: str(p['extracted_at']),
+  };
+}
+
+function filterParams(opts: CrawlExtractFilters): Record<string, string | undefined> {
+  return { shape: opts.shape, page_type: opts.pageType, kind: opts.kind };
 }
 
 export class WebgrphNamespace {
@@ -181,6 +345,167 @@ export class WebgrphNamespace {
       cursor = page.nextCursor ?? undefined;
     } while (cursor);
     return all;
+  }
+
+  // ── Crawl-extract: crawl a site, extract every page, download the rows ──
+
+  /**
+   * Start a crawl-extract job (`POST webgrph/crawl-extract`, answered 202):
+   * the API crawls `url` within the plan's limits and extracts each crawled
+   * page. Needs the Kolektr module as well as Webgrph, and a live API key
+   * (a test key is refused 403).
+   */
+  async startCrawlExtract(url: string, opts: CrawlExtractOptions = {}): Promise<CrawlExtractJob> {
+    const body: Record<string, unknown> = { url };
+    if (opts.maxDepth !== undefined) body['max_depth'] = opts.maxDepth;
+    if (opts.maxPages !== undefined) body['max_pages'] = opts.maxPages;
+    if (opts.includeExternalLinks !== undefined) body['include_external_links'] = opts.includeExternalLinks;
+    if (opts.sessionArtifactId) body['session_artifact_id'] = opts.sessionArtifactId;
+    if (opts.captureMode) body['capture_mode'] = opts.captureMode;
+    if (opts.scope) body['scope'] = opts.scope;
+    if (opts.budget) body['budget'] = opts.budget;
+    if (opts.extract) {
+      const extract: Record<string, unknown> = {};
+      if (opts.extract.entityType) extract['entity_type'] = opts.extract.entityType;
+      if (opts.extract.fields) extract['fields'] = opts.extract.fields;
+      if (opts.extract.schema) {
+        const schema: Record<string, unknown> = { fields: opts.extract.schema.fields };
+        if (opts.extract.schema.itemSelector) schema['item_selector'] = opts.extract.schema.itemSelector;
+        extract['schema'] = schema;
+      }
+      body['extract'] = extract;
+    }
+    const raw = await this._t.post('webgrph/crawl-extract', body);
+    const limits = (raw['limits'] as Record<string, unknown> | undefined) ?? {};
+    return {
+      jobId: String(raw['job_id'] ?? ''),
+      crawlId: String(raw['crawl_id'] ?? ''),
+      url: String(raw['url'] ?? url),
+      status: String(raw['status'] ?? ''),
+      limits: {
+        maxPages: limits['max_pages'] != null ? Number(limits['max_pages']) : null,
+        maxDepth: limits['max_depth'] != null ? Number(limits['max_depth']) : null,
+      },
+      links: parseLinks(raw['links']),
+    };
+  }
+
+  /** A crawl-extract job's stage, counters and row shapes. */
+  async getCrawlExtract(jobId: string): Promise<CrawlExtractStatus> {
+    return parseCrawlExtractStatus(await this._t.get(`webgrph/crawl-extract/${seg(jobId)}`), jobId);
+  }
+
+  /**
+   * Poll a crawl-extract job until it ends and return its last status
+   * (completed, failed or cancelled: check `ok`). Throws JobTimeoutError
+   * when it is still running at `timeoutMs`; the job carries on.
+   */
+  async waitForCrawlExtract(jobId: string, opts: CrawlExtractWaitOptions = {}): Promise<CrawlExtractStatus> {
+    const interval = opts.pollIntervalMs ?? 3000;
+    const deadline = Date.now() + (opts.timeoutMs ?? 60 * 60 * 1000);
+    for (;;) {
+      const status = await this.getCrawlExtract(jobId);
+      if (status.finished) return status;
+      if (Date.now() + interval > deadline) {
+        throw new JobTimeoutError(`Crawl-extract job ${jobId} still running; check it with getCrawlExtract`, jobId);
+      }
+      await sleep(interval);
+    }
+  }
+
+  /**
+   * Crawl a site and extract every page: start the job and wait until it
+   * ends. Throws JobFailedError when it failed (the rows it wrote can
+   * still be read and exported with the error's `jobId`).
+   */
+  async crawlExtract(url: string, opts: CrawlExtractOptions & CrawlExtractWaitOptions = {}): Promise<CrawlExtractStatus> {
+    const job = await this.startCrawlExtract(url, opts);
+    const status = await this.waitForCrawlExtract(job.jobId, opts);
+    if (status.status === 'failed') throw new JobFailedError(status.error ?? 'Crawl-extract job failed', job.jobId);
+    return status;
+  }
+
+  /**
+   * One page of a job's rows, in page order then item order; pass
+   * `nextCursor` back for the next. Rows appear while the job runs.
+   */
+  async getCrawlExtractResults(jobId: string, opts: CrawlExtractResultsOptions = {}): Promise<CrawlExtractResultsPage> {
+    checkLimit(opts.limit);
+    const raw = await this._t.get(
+      `webgrph/crawl-extract/${seg(jobId)}/results`,
+      query({ limit: opts.limit, cursor: opts.cursor, ...filterParams(opts) }),
+    );
+    return {
+      jobId: String(raw['job_id'] ?? jobId),
+      status: String(raw['status'] ?? ''),
+      total: Number(raw['total'] ?? 0),
+      count: Number(raw['count'] ?? 0),
+      rows: ((raw['rows'] as Record<string, unknown>[] | undefined) ?? []).map(parseCrawlExtractRow),
+      nextCursor: (raw['next_cursor'] as string | undefined) ?? null,
+    };
+  }
+
+  /** Every row of a job, a page at a time, following the cursor. */
+  async *iterCrawlExtractResults(jobId: string, opts: Omit<CrawlExtractResultsOptions, 'cursor'> = {}): AsyncIterable<CrawlExtractRow> {
+    let cursor: string | undefined;
+    do {
+      const page = await this.getCrawlExtractResults(jobId, cursor ? { ...opts, cursor } : { ...opts });
+      yield* page.rows;
+      cursor = page.nextCursor ?? undefined;
+    } while (cursor);
+  }
+
+  /** Every row of a job in memory (for a large job prefer `iterCrawlExtractResults` or an export). */
+  async crawlExtractAllResults(jobId: string, opts: Omit<CrawlExtractResultsOptions, 'cursor'> = {}): Promise<CrawlExtractRow[]> {
+    const all: CrawlExtractRow[] = [];
+    for await (const row of this.iterCrawlExtractResults(jobId, opts)) all.push(row);
+    return all;
+  }
+
+  /** The crawled pages of a job and how each was extracted (`offset` paging). */
+  async getCrawlExtractPages(jobId: string, opts: CrawlExtractPagesOptions = {}): Promise<CrawlExtractPagesPage> {
+    checkLimit(opts.limit);
+    const raw = await this._t.get(
+      `webgrph/crawl-extract/${seg(jobId)}/pages`,
+      query({ limit: opts.limit, offset: opts.offset, status: opts.status }),
+    );
+    return {
+      jobId: String(raw['job_id'] ?? jobId),
+      status: String(raw['status'] ?? ''),
+      count: Number(raw['count'] ?? 0),
+      offset: Number(raw['offset'] ?? 0),
+      pages: ((raw['pages'] as Record<string, unknown>[] | undefined) ?? []).map(parseCrawlExtractPage),
+    };
+  }
+
+  /**
+   * Download a job's rows as a stream (`format`: json, ndjson or csv). A job
+   * that has not completed exports the rows it has (`jobStatus`).
+   */
+  async exportCrawlExtract(jobId: string, opts: CrawlExtractExportOptions = {}): Promise<ExportDownload> {
+    const format = checkExportFormat(opts.format);
+    return openExport(this._t, `webgrph/crawl-extract/${seg(jobId)}/export`, query({ format, ...filterParams(opts) }) ?? {});
+  }
+
+  /** Download a job's rows to a file, written as it arrives (Node.js only). */
+  async downloadCrawlExtract(jobId: string, filePath: string, opts: CrawlExtractExportOptions = {}): Promise<SavedExport> {
+    const format = checkExportFormat(opts.format);
+    return saveExport(this._t, `webgrph/crawl-extract/${seg(jobId)}/export`, query({ format, ...filterParams(opts) }) ?? {}, filePath);
+  }
+
+  /**
+   * Stop a job; rows already written stay. `status` is `cancelled`, or
+   * `cancelling` while a worker still holds it. A job that has already
+   * ended is a 409 (ApiError).
+   */
+  async cancelCrawlExtract(jobId: string): Promise<CrawlExtractCancelResult> {
+    const raw = await this._t.post(`webgrph/crawl-extract/${seg(jobId)}/cancel`, {});
+    return {
+      success: Boolean(raw['success']),
+      jobId: String(raw['job_id'] ?? jobId),
+      crawlId: String(raw['crawl_id'] ?? ''),
+      status: String(raw['status'] ?? ''),
+    };
   }
 
   // ── Reader view, detected APIs, sessions ─────────────────────────────

@@ -112,6 +112,176 @@ export interface CrawlResult extends Paginated {
   readonly ok: boolean;
 }
 
+// ── Crawl-extract (webgrph/crawl-extract) and exports ────────────────────────
+
+/** The file formats of the export routes. */
+export type ExportFormat = 'json' | 'ndjson' | 'csv';
+
+/** One field of an explicit selector schema (crawl_extract_router.py SelectorField). */
+export interface CrawlExtractSelectorField {
+  name: string;
+  /** CSS selector, relative to the item. */
+  selector?: string;
+  /** Attribute to read; the text when omitted. */
+  attribute?: string;
+  /** `'list'` keeps every match. */
+  type?: string;
+}
+
+/** What to extract from each crawled page. All optional: with nothing given the API decides per page. */
+export interface CrawlExtractSpec {
+  /** What the items are, e.g. `'products'`. */
+  entityType?: string;
+  /** Field names wanted. */
+  fields?: string[];
+  /** Explicit CSS selectors, tried first. Sent as `extract.schema`. */
+  schema?: { itemSelector?: string; fields: CrawlExtractSelectorField[] };
+}
+
+/** The API's links for a crawl-extract job (paths under the API host). */
+export interface CrawlExtractLinks {
+  status: string;
+  results: string;
+  pages: string;
+  cancel: string;
+  export: Record<string, string>;
+  crawlEvents: string;
+  events: string;
+}
+
+/** The 202 answer of `webgrph.startCrawlExtract`. */
+export interface CrawlExtractJob {
+  jobId: string;
+  crawlId: string;
+  url: string;
+  /** queued, crawling, extracting, completed, failed or cancelled. */
+  status: string;
+  /** The crawl limits the API applied (the tier's maxima when not given, clamped to them when given). */
+  limits: { maxPages: number | null; maxDepth: number | null };
+  links: CrawlExtractLinks | null;
+}
+
+/** One distinct set of fields among a job's rows; `shape` is what the results and export filters take. */
+export interface CrawlExtractShape {
+  shape: string;
+  /** `item` or `page`. */
+  kind: string;
+  rows: number;
+  pageTypes: string[];
+  fields: string[];
+}
+
+/** `webgrph.getCrawlExtract`: a job's stage and counters. */
+export interface CrawlExtractStatus {
+  jobId: string;
+  crawlId: string;
+  url: string;
+  /** queued, crawling, extracting, completed, failed or cancelled. */
+  status: string;
+  cancelRequested: boolean;
+  progress: {
+    pagesCrawled: number;
+    /** Null until the crawl has finished. */
+    pagesTotal: number | null;
+    pagesExtracted: number;
+    pagesFailed: number;
+    items: number;
+  };
+  error: string | null;
+  errorCode: string | null;
+  /** The job's request as the API stored it (`crawl`, `extract`). */
+  request: Record<string, unknown>;
+  createdAt: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
+  updatedAt: string | null;
+  links: CrawlExtractLinks | null;
+  /** Pages by how they were extracted (`failed` for those that were not). */
+  pagesByMethod: Record<string, number>;
+  shapes: CrawlExtractShape[];
+  /** True when the job has ended (completed, failed or cancelled). */
+  readonly finished: boolean;
+  /** True when the job completed. */
+  readonly ok: boolean;
+}
+
+/** One extracted row: an item of a page, or the page itself (`rowKind` `page`). */
+export interface CrawlExtractRow {
+  pageUrl: string;
+  pageType: string | null;
+  /** `item` or `page`. */
+  rowKind: string;
+  itemIndex: number;
+  /** The row's own fields. */
+  data: Record<string, unknown>;
+  shape: string | null;
+}
+
+/** One page of `webgrph.getCrawlExtractResults`; pass `nextCursor` back for the next. */
+export interface CrawlExtractResultsPage {
+  jobId: string;
+  status: string;
+  /** Rows matching the filters, over the whole job. */
+  total: number;
+  count: number;
+  rows: CrawlExtractRow[];
+  /** Null on the last page. */
+  nextCursor: string | null;
+}
+
+/** One crawled page of a crawl-extract job and how it was extracted. */
+export interface CrawlExtractPage {
+  pageSeq: number;
+  pageUrl: string;
+  pageType: string | null;
+  title: string | null;
+  /** `extracted` or `failed`. */
+  status: string;
+  method: string | null;
+  itemCount: number;
+  detail: unknown;
+  extractedAt: string | null;
+}
+
+/** `webgrph.getCrawlExtractPages`. */
+export interface CrawlExtractPagesPage {
+  jobId: string;
+  status: string;
+  count: number;
+  offset: number;
+  pages: CrawlExtractPage[];
+}
+
+/** `webgrph.cancelCrawlExtract`: `status` is `cancelled`, or `cancelling` while a worker still holds the job. */
+export interface CrawlExtractCancelResult {
+  success: boolean;
+  jobId: string;
+  crawlId: string;
+  status: string;
+}
+
+/** A streamed export: read `body`; the rest is what the response headers say. */
+export interface ExportDownload {
+  body: ReadableStream<Uint8Array>;
+  contentType: string | null;
+  /** The file name the API suggests (Content-Disposition). */
+  filename: string | null;
+  /**
+   * The job's status when the export started (`X-Job-Status`; crawl-extract
+   * only). A job that has not completed exports the rows it has so far.
+   */
+  jobStatus: string | null;
+}
+
+/** An export written to a file. */
+export interface SavedExport {
+  path: string;
+  bytes: number;
+  contentType: string | null;
+  filename: string | null;
+  jobStatus: string | null;
+}
+
 /** A crawl progress event: a pipeline event with the crawl's id. */
 export interface CrawlEvent extends PipelineEvent {
   crawlId: string;
@@ -148,33 +318,25 @@ export interface NexusSynthesisResult {
   readonly ok: boolean;
 }
 
+/** One safety check of `nexus.verify` (the API's `safety_checks[]`). */
+export interface NexusSafetyCheck {
+  property: string;
+  passed: boolean;
+  details: string;
+}
+
 export interface NexusVerifyResult {
   strategyId: string;
   verified: boolean;
+  /** `"verified"` or `"unsafe"`; null when the API gave none. */
+  status: string | null;
   safetyScore: number;
+  riskScore: number;
+  /** The rules the strategy breaks. */
   violations: string[];
-  error: string | null;
-  readonly ok: boolean;
-}
-
-export interface NexusExecuteResult {
-  url: string;
-  strategyId: string;
-  success: boolean;
-  records: Record<string, unknown>[];
-  artifactId: string | null;
-  durationMs: number;
-  /** The id to pass to `nexus.knowledge()`; null when the API gave none. */
-  executionResultId: string | null;
-  error: string | null;
-  readonly ok: boolean;
-}
-
-export interface NexusKnowledgeResult {
-  executionResultId: string;
-  learnedConcepts: Record<string, unknown>[];
-  patterns: Record<string, unknown>[];
-  totalPatterns: number;
+  /** Every check made, passed or not. */
+  safetyChecks: NexusSafetyCheck[];
+  verificationResultId: string | null;
   durationMs: number;
   error: string | null;
   readonly ok: boolean;
