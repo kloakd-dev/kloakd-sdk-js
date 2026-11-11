@@ -23,23 +23,26 @@ describe('nexus', () => {
     expect([r.verified, r.safetyScore, r.ok]).toEqual([true, 0.97, true]);
   });
 
-  it('execute reads records and error_message', async () => {
-    const r = await makeClient(mockFetch({ url: 'u', strategy_id: 's1', records: [{ a: 1 }], success: false, error_message: 'timeout' })).nexus.execute('s1', 'u');
-    expect(r.records).toEqual([{ a: 1 }]);
-    expect(r.error).toBe('timeout');
-    expect(r.ok).toBe(false);
+  it('verify reads status, the safety checks and the risk score (nexus/router.py VerifyResponse)', async () => {
+    const r = await makeClient(mockFetch({
+      strategy_id: 's1', verified: false, status: 'unsafe', violations: ['no_destructive_actions'], safety_score: 0.2,
+      risk_score: 0.8, verification_result_id: 'v-1', duration_ms: 14,
+      safety_checks: [{ property: 'no_destructive_actions', passed: false, details: 'clicks a delete button' }, { property: 'bounded', passed: true }],
+    })).nexus.verify('s1');
+    expect([r.verified, r.ok, r.status, r.riskScore, r.verificationResultId, r.durationMs]).toEqual([false, false, 'unsafe', 0.8, 'v-1', 14]);
+    expect(r.violations).toEqual(['no_destructive_actions']);
+    expect(r.safetyChecks).toEqual([
+      { property: 'no_destructive_actions', passed: false, details: 'clicks a delete button' },
+      { property: 'bounded', passed: true, details: '' },
+    ]);
+    const bare = await makeClient(mockFetch({ strategy_id: 's1', verified: true })).nexus.verify('s1');
+    expect([bare.status, bare.safetyChecks, bare.riskScore, bare.verificationResultId]).toEqual([null, [], 0, null]);
   });
 
-  it('execute reads execution_result_id, the id knowledge() takes', async () => {
-    const r = await makeClient(mockFetch({ url: 'u', strategy_id: 's1', records: [], success: true, execution_result_id: 'er-7' })).nexus.execute('s1', 'u');
-    expect(r.executionResultId).toBe('er-7');
-    const without = await makeClient(mockFetch({ url: 'u', strategy_id: 's1', success: true })).nexus.execute('s1', 'u');
-    expect(without.executionResultId).toBeNull();
-  });
-
-  it('knowledge reads patterns', async () => {
-    const r = await makeClient(mockFetch({ execution_result_id: 'e1', learned_concepts: [], patterns: [{ p: 1 }], total_patterns: 1 })).nexus.knowledge('e1');
-    expect([r.patterns.length, r.totalPatterns]).toEqual([1, 1]);
+  it('has no execute (the API removed nexus/execute) and no knowledge (not in the public API)', () => {
+    const nexus = makeClient(mockFetch({})).nexus as unknown as Record<string, unknown>;
+    expect(nexus['execute']).toBeUndefined();
+    expect(nexus['knowledge']).toBeUndefined();
   });
 
   it('reason sends query_type and parameters as a list of strings (nexus/router.py ReasonRequest)', async () => {

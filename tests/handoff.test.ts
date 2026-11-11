@@ -81,15 +81,6 @@ describe('the other synchronous routes past the limit (handoff/{job_id})', () =>
     expect((fetch as unknown as Calls).mock.calls).toHaveLength(1);
   });
 
-  it('nexus.execute reads execution_result_id after a hand-off', async () => {
-    const fetch = mockFetchSequence([
-      { body: HANDOFF_202, status: 202 },
-      { body: { status: 'completed', result: { url: 'u', strategy_id: 's1', records: [], success: true, execution_result_id: 'er-1' } } },
-    ]);
-    const r = await makeClient(fetch).nexus.execute('s1', 'u', { pollIntervalMs: 1 });
-    expect([r.ok, r.executionResultId]).toEqual([true, 'er-1']);
-  });
-
   it('fetchyr.authenticate: a failed job throws JobFailedError with its error', async () => {
     const fetch = mockFetchSequence([
       { body: HANDOFF_202, status: 202 },

@@ -6,7 +6,9 @@
  * kernel/bootstrap.py does; for 0.4.0 the nexus/recommendations routes, the
  * unmounted standalone recommendations router, POST kolektr/jobs and the
  * other routes kobe-scraper d7d25134 deleted are removed, and the hand-off
- * poll GET handoff/{job_id} is added). Each public
+ * poll GET handoff/{job_id} is added; after 0.6.0 POST nexus/execute is removed
+ * and the webgrph/crawl-extract routes and GET batch-jobs/{id}/export are
+ * added, as kobe-scraper integration/2026-11-12 e5e358aa has them). Each public
  * method of each namespace is called with placeholder arguments against a
  * recording fetch.
  */
@@ -109,7 +111,6 @@ const HANDOFF_CALLS: Array<{ caller: string; route: string; poll: string; call: 
   { caller: 'fetchyr.detectMfa', route: 'fetchyr/mfa/detect', poll: 'handoff/h-1', call: (c) => c.fetchyr.detectMfa('u', { pollIntervalMs: 1 }) },
   { caller: 'nexus.analyze', route: 'nexus/analyze', poll: 'handoff/h-1', call: (c) => c.nexus.analyze('u', '<html/>', { pollIntervalMs: 1 }) },
   { caller: 'nexus.synthesize', route: 'nexus/synthesize', poll: 'handoff/h-1', call: (c) => c.nexus.synthesize('u', '<html/>', 'g', { pollIntervalMs: 1 }) },
-  { caller: 'nexus.execute', route: 'nexus/execute', poll: 'handoff/h-1', call: (c) => c.nexus.execute('s', 'u', { pollIntervalMs: 1 }) },
 ];
 
 describe('every route that can hand off is followed through a live poll route', () => {
@@ -137,7 +138,7 @@ describe('every route that can hand off is followed through a live poll route', 
     expect(out).toBeTruthy(); // resolved with the parsed result; parsing is checked in handoff.test.ts
   });
 
-  it('covers every route the API decorates with @hands_off_after_limit, and evadr/fetch', () => {
+  it('covers every module route the API decorates with @hands_off_after_limit, and evadr/fetch', () => {
     expect(HANDOFF_CALLS.map((h) => h.route).sort()).toEqual([
       'evadr/fetch',
       'fetchyr/authenticate',
@@ -146,7 +147,6 @@ describe('every route that can hand off is followed through a live poll route', 
       'fetchyr/mfa/detect',
       'kolektr/extract',
       'nexus/analyze',
-      'nexus/execute',
       'nexus/synthesize',
     ]);
   });
@@ -168,6 +168,7 @@ describe('every route that can hand off is followed through a live poll route', 
       ['GET', 'webgrph/analytics/job-trends'],
       ['GET', 'webgrph/analytics/error-summary'],
       ['GET', 'evadr/profiles'],
+      ['POST', 'nexus/execute'],
     ];
     expect(removed.filter(([m, p]) => isLive(m, `${ORG_PREFIX}/${p}`))).toEqual([]);
     expect(isLive('GET', `${ORG_PREFIX}/kolektr/jobs`)).toBe(true);
