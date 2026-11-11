@@ -263,7 +263,7 @@ describe('webgrph crawl-extract export and cancel', () => {
     afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
 
     it('downloadCrawlExtract writes the chunks to the file as they arrive', async () => {
-      const csv = ['﻿page_url,page_type,row_kind,item_index,title\r\n', 'https://shop.example/p,listing,item,0,"café, bar"\r\n'];
+      const csv = ['\ufeffpage_url,page_type,row_kind,item_index,title\r\n', 'https://shop.example/p,listing,item,0,"café, bar"\r\n'];
       const fetch = streamFetch(csv, { ...HEADERS, 'content-type': 'text/csv; charset=utf-8', 'x-job-status': 'completed' });
       const target = join(dir, 'rows.csv');
       const saved = await makeClient(fetch).webgrph.downloadCrawlExtract(JOB, target, { format: 'csv' });
