@@ -703,3 +703,113 @@ export interface CrawlProgressEvent {
   error: string | null;
   metadata: Record<string, unknown>;
 }
+
+// ── Batch jobs (batch-jobs) ──────────────────────────────────────────────────
+
+/** A batch job (kernel/jobs_runs_router.py BatchJob). */
+export interface BatchJob {
+  id: string;
+  name: string;
+  /**
+   * pending, running, paused, held_quota, completed, failed or cancelled.
+   * A paused batch starts no further item until it is resumed; items that
+   * were already running finish.
+   */
+  status: string;
+  totalItems: number;
+  /** Items that completed or failed. */
+  completedItems: number;
+  createdAt: string;
+  /** The API's note for a paused batch or one held for quota; null otherwise. */
+  message: string | null;
+}
+
+/** One page of the organisation's batch jobs, newest first (BatchJobsList). */
+export interface BatchJobsPage {
+  /** All of the organisation's batch jobs, not only this page. */
+  total: number;
+  batchJobs: BatchJob[];
+}
+
+/** One item (URL) of a batch, as `batch-jobs/{id}/results` lists it. */
+export interface BatchJobItem {
+  jobId: string;
+  url: string | null;
+  /** pending, running, held_quota, completed, failed or cancelled. */
+  status: string;
+  /** What the item extracted; null until it completes. */
+  extractedData: unknown;
+  /** Records of a detected API the item's URL names; null otherwise. */
+  apiData: Record<string, unknown> | null;
+}
+
+/** A batch's items and their results (BatchJobResults). */
+export interface BatchJobResults {
+  batchJobId: string;
+  /** The items asked for: all of them, or `limit` from `offset`, in creation order. */
+  results: BatchJobItem[];
+  /**
+   * Counts of the whole batch when `limit` was given; without `limit` (and
+   * with an `offset`) they count the items returned.
+   */
+  totalJobs: number;
+  completedJobs: number;
+  failedJobs: number;
+}
+
+// ── Unified scrape (scraping/unified) ────────────────────────────────────────
+
+/** One step of a unified scrape's escalation (EscalationEvent). */
+export interface UnifiedEscalation {
+  from: string;
+  to: string;
+  reason: string;
+  timestamp: string;
+}
+
+/** The answer of `client.unifiedScrape` (unified_scraping.py UnifiedScrapeResponse). */
+export interface UnifiedScrapeResult {
+  success: boolean;
+  /** The scrape's job: read it with `client.getUnifiedScrape(jobId)`. */
+  jobId: string;
+  /** level1, level2, or preflight when a login page was found before any scrape. */
+  level: string;
+  status: string;
+  escalationPath: UnifiedEscalation[];
+  message: string;
+  metadata: Record<string, unknown> | null;
+  /**
+   * True when the URL is behind a login: nothing was scraped, `status` is
+   * `auth_required` and `discoveryId` names the auth-chain discovery
+   * (`fetchyr.getAuthChainStatus`). `jobId` then names no stored job.
+   */
+  authRequired: boolean;
+  discoveryId: string | null;
+}
+
+/** Progress of a running unified scrape (ProgressDetail). */
+export interface UnifiedScrapeProgress {
+  percentage: number;
+  currentStep: string;
+  itemsFound: number | null;
+  itemsTarget: number | null;
+  /** The first few results, when there are any. */
+  partialResults: Record<string, unknown>[] | null;
+}
+
+/** The state of a unified scrape job (unified_scraping.py JobStatusResponse). */
+export interface UnifiedScrapeStatus {
+  id: string;
+  status: string;
+  level: string;
+  progress: number | null;
+  /** Set while the job is running. */
+  progressDetail: UnifiedScrapeProgress | null;
+  createdAt: string;
+  updatedAt: string | null;
+  completedAt: string | null;
+  error: string | null;
+  /** The job's stored result document; null until there is one. */
+  result: Record<string, unknown> | null;
+  escalationPath: UnifiedEscalation[];
+}

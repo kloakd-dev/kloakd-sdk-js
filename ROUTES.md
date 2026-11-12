@@ -1,8 +1,8 @@
 # Routes the SDK calls (unreleased; after 0.6.0)
 
 Checked against the API's route list (`tests/fixtures/routes.tsv`, generated
-from kobe-scraper main 6bd19e9b with the module routers mounted as
-`kernel/bootstrap.py` does). `tests/contract.test.ts` calls every public
+from kobe-scraper integration/2026-11-12b at 228857dc with the module routers
+mounted as `kernel/bootstrap.py` does; 280 rows). `tests/contract.test.ts` calls every public
 method and fails on any request that is not a live route.
 
 All paths are under `/api/v1/organizations/{organization_id}/`.
@@ -111,7 +111,7 @@ through a live poll route.
 ## Changed for 0.7.0 (unreleased), second part
 
 Checked against kobe-scraper main 6bd19e9b. The route list fixture is now
-generated again, not edited: every route of the API app (292 rows), with
+generated again, not edited: every route of the API app (292 rows then), with
 `{x:path}` parameters written `{x}`. The five `webgrph/analytics/...`
 dashboard routes that 0.4.0 left in the list are gone from the API.
 
@@ -131,9 +131,32 @@ dashboard routes that 0.4.0 left in the list are gone from the API.
 | POST | nexus/analyze, synthesize, verify | the answers have no `error` field; it is removed from the three result types |
 | POST | nexus/reason | `timeout_secs` is sent when `timeoutSecs` is given, 0 included |
 
-Not covered, by choice: the batch routes other than the export, POST
-scraping/unified, the jobs, results and webhook routes, and the dashboard
-routes (billing, organisations, API keys).
+Not covered, by choice: the jobs, results and webhook routes, and the
+dashboard routes (billing, organisations, API keys). The batch routes and
+the unified scrape are covered in the third part, below.
+
+## Changed for 0.7.0 (unreleased), third part
+
+Checked against kobe-scraper integration/2026-11-12b (228857dc):
+`kernel/jobs_runs_router.py`, `application/jobs/batch_control.py` and
+`api/v1/endpoints/unified_scraping.py`. The route list fixture is generated
+from that checkout: 280 rows. The 12 `performance/...` routes are gone from
+the API; the SDK called none of them.
+
+| Method | Path | 0.7.0 |
+|---|---|---|
+| POST | batch-jobs | new `client.createBatchJob`; body `{urls, extraction_config?, crawl_id?, entity_type?, fields?}`; 201; 403 `test_key_not_allowed`, 409 `concurrent_limit`, 413 `batch_too_large`, 422 for no URLs, 503 `dispatch_failed` |
+| GET | batch-jobs | new `client.listBatchJobs`; `page`, `page_size` (1–100) |
+| GET | batch-jobs/{batch_job_id} | new `client.getBatchJob` |
+| GET | batch-jobs/{batch_job_id}/results | new `client.getBatchJobResults`; `limit` (1–1000), `offset`; each item is `{job_id, url, status, extracted_data, api_data}` |
+| POST | batch-jobs/{batch_job_id}/pause | new `client.pauseBatchJob`; only a running batch; a paused one answers 200 unchanged; otherwise 409 `invalid_batch_transition` |
+| POST | batch-jobs/{batch_job_id}/resume | new `client.resumeBatchJob`; only a paused batch; a running one answers 200 unchanged; otherwise 409 `invalid_batch_transition`; 409 `concurrent_limit`; 503 `dispatch_failed` (paused again) |
+| POST | batch-jobs/{batch_job_id}/cancel | new `client.cancelBatchJob`; a cancelled one answers 200 unchanged; 409 `invalid_batch_transition` once completed or failed |
+| POST | scraping/unified | new `client.unifiedScrape`; body `{url, prompt?, mode?, schema?, options?, context?, constraints?, session_artifact_id?}`; a 202 hand-off is followed through GET handoff/{job_id}; 403 `test_key_not_allowed`, `module_not_entitled` |
+| GET | scraping/unified/{job_id} | new `client.getUnifiedScrape` |
+
+Not covered, by choice: `DELETE batch/{batch_job_id}`, `POST
+batch/url-import` and the event stream `GET batch-jobs/{batch_job_id}/stream`.
 
 ## Changed for 0.7.0 (unreleased), first part
 
@@ -155,7 +178,8 @@ crawl-extract routes and the batch export added.
 | GET | batch-jobs/{batch_job_id}/export | `client.exportBatchJob`, `client.downloadBatchJob`; `format=json\|ndjson\|csv` |
 
 The 202 hand-off is now followed by eight methods (`nexus.execute` is gone).
-The API also hands off POST scraping/unified; the SDK has no method for it.
+The API also hands off POST scraping/unified; `client.unifiedScrape` follows it
+(third part of the 0.7.0 changes, above).
 
 ## Changed in 0.6.0
 

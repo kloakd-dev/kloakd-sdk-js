@@ -205,6 +205,70 @@ per-request timeout.
 batch job's results. The batch export does not say the job's state:
 `jobStatus` and `crawl` are null there.
 
+## Batch jobs
+
+A batch extracts a list of URLs, one item per URL, and holds one work slot
+until it ends. It needs a live key (a test key is refused with 403).
+
+```typescript
+const batch = await client.createBatchJob(
+  ['https://shop.example/p/1', 'https://shop.example/p/2'],
+  { entityType: 'products', fields: ['name', 'price'] },
+);
+
+await client.pauseBatchJob(batch.id);   // items already running finish; the rest wait
+await client.resumeBatchJob(batch.id);  // the waiting items are queued again, each once
+const state = await client.getBatchJob(batch.id);  // status, totalItems, completedItems, message
+
+const page = await client.getBatchJobResults(batch.id, { limit: 100, offset: 0 });
+for (const item of page.results) console.log(item.url, item.status, item.extractedData);
+
+await client.cancelBatchJob(batch.id);  // items not yet ended are cancelled; finished ones keep their results
+```
+
+- `status` is `pending`, `running`, `paused`, `held_quota`, `completed`,
+  `failed` or `cancelled`. Only a running batch can be paused, only a
+  paused one resumed, and a batch that has completed or failed cannot be
+  cancelled: the API answers 409 and the SDK throws `ApiError` with `code`
+  `invalid_batch_transition` (the message names the batch's status).
+- Repeating a call is not an error: pausing a paused batch, resuming a
+  running one and cancelling a cancelled one answer the batch as it is.
+- `resumeBatchJob` can throw a 503 `ApiError` with `code` `dispatch_failed`:
+  the items could not be queued and the batch is paused again, so call it
+  again. `createBatchJob` throws the same when the batch could not be
+  queued; nothing was started. Neither is retried by the SDK.
+- Creating or resuming over the plan's running batches throws
+  `ConcurrencyLimitError`; more URLs than the plan's page limit is a 413
+  `ApiError` with `code` `batch_too_large`.
+- `listBatchJobs({ page, pageSize })` lists the organisation's batches,
+  newest first. `exportBatchJob` and `downloadBatchJob` (above) give the
+  rows as a file.
+
+## Unified scrape
+
+`client.unifiedScrape(url, opts)` lets the API choose how to scrape a URL:
+level 1 (direct extraction) or level 2 (the Strategy Engine), escalating
+when the first fails. It needs a live key whose plan has Kolektr and Nexus
+(403 `test_key_not_allowed` or `module_not_entitled` otherwise).
+
+```typescript
+const scrape = await client.unifiedScrape('https://shop.example/list', {
+  prompt: 'product names and prices',
+  mode: 'auto',                      // or 'level1', 'level2'
+  schema: { name: 'product name', price: 'price' },
+});
+if (scrape.authRequired) {
+  // The URL is behind a login: nothing was scraped. scrape.discoveryId names the auth-chain discovery.
+} else {
+  const job = await client.getUnifiedScrape(scrape.jobId);  // status, level, progress, result, escalationPath
+}
+```
+
+Options: `prompt`, `mode`, `schema`, `options`, `context`, `constraints`,
+`sessionArtifactId` (a login session), and `pollIntervalMs` /
+`pollTimeoutMs` for a request the API hands off (202), which is followed
+like every other long request.
+
 ## Login sessions
 
 To crawl or fetch behind a login, create a session and pass its id as
@@ -298,7 +362,7 @@ Event types: `thinking`, `interpretation`, `progress`, `results`, `error`,
 | `parlyr` | `parse`, `chat`, `chatStream`, `deleteSession` |
 | `fetchyr` | `storeCredentials`, `listCredentials`, `deleteCredentials`, `authenticate`, `startLoginSession`, `getSession`, `resumeSession`, `listSessions`, `invalidateSession`, `terminateSession`, `createWorkflow`, `listWorkflows`, `getWorkflow`, `updateWorkflow`, `deleteWorkflow`, `getWorkflowStatistics`, `executeWorkflow`, `getExecution`, `resumeExecution`, `createMultiSiteWorkflow`, `detectForms`, `fillForm`, `detectMfa`, `submitMfa`, `listMfaChallenges`, `getMfaChallenge`, `getMfaStatistics`, `checkDuplicate`, `createDedupSession`, `listDedupSessions`, `getDedupSession`, `getDedupSessionStatistics`, `getDedupDomainStatistics`, `discoverAuthChain`, `getAuthChainStatus`, `resumeAuthChainCredentials`, `resumeAuthChainMfa` |
 | `kolektr` | `page`, `pageAll`, `extractHtml`, `getApiData`, `getApiDataPaginated`, `extractAllApiData`, `listContent`, `getContent`, `deleteContent`, `listJobs`, `getJob`, `getJobStatus`, `listScrapers`, `createScraper`, `getScraper`, `updateScraper`, `deleteScraper` |
-| client | `crawl`, `crawlStream`, `getHandoff`, `waitForHandoff`, `exportBatchJob`, `downloadBatchJob` |
+| client | `crawl`, `crawlStream`, `getHandoff`, `waitForHandoff`, `createBatchJob`, `getBatchJob`, `listBatchJobs`, `getBatchJobResults`, `pauseBatchJob`, `resumeBatchJob`, `cancelBatchJob`, `exportBatchJob`, `downloadBatchJob`, `unifiedScrape`, `getUnifiedScrape` |
 
 `ROUTES.md` lists the API route behind each call.
 
@@ -317,7 +381,7 @@ Every error extends `KloakdError` (`statusCode`, `message`, `code`: the API's er
 | `QuotaExceededError` | 429 `gb_exhausted`: the plan's GB are used up (`tier`, `upgradeUrl`). |
 | `BillingUnavailableError` | 503 `billing_unavailable`: usage could not be checked; nothing was started. |
 | `UpstreamError` | 502. |
-| `ApiError` | Any other error status. A 422 carries the API's validation messages. |
+| `ApiError` | Any other error status. A 422 carries the API's validation messages. `code` holds the API's error code, for example 409 `invalid_batch_transition` and 503 `dispatch_failed` on the batch calls. |
 | `JobFailedError` | A handed-off job failed or expired (`jobId`). |
 | `JobTimeoutError` | A job was still running when the wait ran out (`jobId`). |
 

@@ -21,7 +21,8 @@
  */
 
 import { HttpTransport } from './_http.js';
-import { getHandoff, waitForHandoff } from './_handoff.js';
+import { getHandoff, postFollowingHandoff, waitForHandoff } from './_handoff.js';
+import { query, seg } from './_params.js';
 import { checkExportFormat, openExport, saveExport } from './_download.js';
 import type { HandoffOptions } from './_handoff.js';
 import {
@@ -43,6 +44,10 @@ import { SkanyrNamespace } from './modules/skanyr.js';
 import { WebgrphNamespace } from './modules/webgrph.js';
 import type { CrawlOptions } from './modules/webgrph.js';
 import type {
+  BatchJob,
+  BatchJobItem,
+  BatchJobResults,
+  BatchJobsPage,
   CrawlPage,
   CrawlProgressEvent,
   CrawlResult,
@@ -51,6 +56,10 @@ import type {
   FetchResult,
   SavedExport,
   SiteCrawlResult,
+  UnifiedEscalation,
+  UnifiedScrapeProgress,
+  UnifiedScrapeResult,
+  UnifiedScrapeStatus,
 } from './models.js';
 
 const DEFAULT_BASE_URL = 'https://api.kloakd.dev';
@@ -88,6 +97,84 @@ export interface CrawlOrchestratorOptions {
   extractItemSelector?: string;
   includeExternalLinks?: boolean;
   sessionArtifactId?: string;
+}
+
+/** Options for `createBatchJob` (the body of `POST batch-jobs`). */
+export interface BatchJobOptions {
+  /** How each URL is extracted, for example `{ selectors: { title: 'h1' } }`. */
+  extractionConfig?: Record<string, unknown>;
+  /** The crawl the URLs came from: its detected-API records are added to the results. */
+  crawlId?: string;
+  /** What each page holds, for example `products`. */
+  entityType?: string;
+  /** The names of the fields to extract. */
+  fields?: string[];
+}
+
+/** Options for `unifiedScrape` (unified_scraping.py UnifiedScrapeRequest) and how a 202 is followed. */
+export interface UnifiedScrapeOptions extends HandoffOptions {
+  /** What to extract, in plain words. */
+  prompt?: string;
+  /** auto (the API's default), level1 or level2. */
+  mode?: 'auto' | 'level1' | 'level2';
+  /** Field name to description; made from `prompt` when omitted. */
+  schema?: Record<string, string>;
+  /** Scraping options (timeout, proxy and so on). */
+  options?: Record<string, unknown>;
+  /** Context for the Strategy Engine. */
+  context?: Record<string, unknown>;
+  /** Constraints for the Strategy Engine. */
+  constraints?: Record<string, unknown>;
+  /** A login session's id, to scrape behind a login. */
+  sessionArtifactId?: string;
+}
+
+type Raw = Record<string, unknown>;
+const strOrNull = (v: unknown): string | null => (typeof v === 'string' ? v : null);
+const numOrNull = (v: unknown): number | null => (typeof v === 'number' ? v : null);
+const objOrNull = (v: unknown): Raw | null =>
+  v !== null && typeof v === 'object' && !Array.isArray(v) ? (v as Raw) : null;
+
+function parseBatchJob(raw: Raw): BatchJob {
+  return {
+    id: String(raw['id'] ?? ''),
+    name: String(raw['name'] ?? ''),
+    status: String(raw['status'] ?? ''),
+    totalItems: Number(raw['total_items'] ?? 0),
+    completedItems: Number(raw['completed_items'] ?? 0),
+    createdAt: String(raw['created_at'] ?? ''),
+    message: strOrNull(raw['message']),
+  };
+}
+
+function parseBatchJobItem(raw: Raw): BatchJobItem {
+  return {
+    jobId: String(raw['job_id'] ?? ''),
+    url: strOrNull(raw['url']),
+    status: String(raw['status'] ?? ''),
+    extractedData: raw['extracted_data'] ?? null,
+    apiData: objOrNull(raw['api_data']),
+  };
+}
+
+function parseEscalations(raw: unknown): UnifiedEscalation[] {
+  return (Array.isArray(raw) ? (raw as Raw[]) : []).map((e) => ({
+    from: String(e['from'] ?? ''),
+    to: String(e['to'] ?? ''),
+    reason: String(e['reason'] ?? ''),
+    timestamp: String(e['timestamp'] ?? ''),
+  }));
+}
+
+function parseUnifiedProgress(raw: Raw | null): UnifiedScrapeProgress | null {
+  if (raw === null) return null;
+  return {
+    percentage: Number(raw['percentage'] ?? 0),
+    currentStep: String(raw['current_step'] ?? ''),
+    itemsFound: numOrNull(raw['items_found']),
+    itemsTarget: numOrNull(raw['items_target']),
+    partialResults: Array.isArray(raw['partial_results']) ? (raw['partial_results'] as Raw[]) : null,
+  };
 }
 
 /**
@@ -198,13 +285,152 @@ export class Kloakd {
    */
   async exportBatchJob(batchJobId: string, opts: { format?: ExportFormat } = {}): Promise<ExportDownload> {
     const format = checkExportFormat(opts.format);
-    return openExport(this._transport, `batch-jobs/${encodeURIComponent(batchJobId)}/export`, { format });
+    return openExport(this._transport, `batch-jobs/${seg(batchJobId)}/export`, { format });
   }
 
   /** Download a batch job's results to a file, written as it arrives (Node.js only). */
   async downloadBatchJob(batchJobId: string, filePath: string, opts: { format?: ExportFormat } = {}): Promise<SavedExport> {
     const format = checkExportFormat(opts.format);
-    return saveExport(this._transport, `batch-jobs/${encodeURIComponent(batchJobId)}/export`, { format }, filePath);
+    return saveExport(this._transport, `batch-jobs/${seg(batchJobId)}/export`, { format }, filePath);
+  }
+
+  /**
+   * Create a batch job: one extraction per URL (`POST batch-jobs`, 201).
+   * The batch holds one work slot until it ends. Refused with 403
+   * `test_key_not_allowed` for a test key, 413 `batch_too_large` over the
+   * tier's URL limit, 422 for an empty list, ConcurrencyLimitError (409)
+   * at the tier's running batches, and 503 `dispatch_failed` when it could
+   * not be queued (nothing was started). Never retried.
+   */
+  async createBatchJob(urls: string[], opts: BatchJobOptions = {}): Promise<BatchJob> {
+    const body: Raw = { urls };
+    if (opts.extractionConfig !== undefined) body['extraction_config'] = opts.extractionConfig;
+    if (opts.crawlId !== undefined) body['crawl_id'] = opts.crawlId;
+    if (opts.entityType !== undefined) body['entity_type'] = opts.entityType;
+    if (opts.fields !== undefined) body['fields'] = opts.fields;
+    return parseBatchJob(await this._transport.post('batch-jobs', body));
+  }
+
+  /** A batch job's state (`GET batch-jobs/{batch_job_id}`). 404 for a batch that is not yours. */
+  async getBatchJob(batchJobId: string): Promise<BatchJob> {
+    return parseBatchJob(await this._transport.get(`batch-jobs/${seg(batchJobId)}`));
+  }
+
+  /** The organisation's batch jobs, newest first (`GET batch-jobs`; `pageSize` 1 to 100, default 20). */
+  async listBatchJobs(opts: { page?: number; pageSize?: number } = {}): Promise<BatchJobsPage> {
+    const raw = await this._transport.get('batch-jobs', query({ page: opts.page, page_size: opts.pageSize }));
+    return {
+      total: Number(raw['total'] ?? 0),
+      batchJobs: ((raw['batch_jobs'] as Raw[] | undefined) ?? []).map(parseBatchJob),
+    };
+  }
+
+  /**
+   * A batch's items with what each extracted
+   * (`GET batch-jobs/{batch_job_id}/results`). Every item without `limit`;
+   * with `limit` (1 to 1000) that many from `offset`, and the counts are
+   * then of the whole batch. To download the rows use `exportBatchJob`.
+   */
+  async getBatchJobResults(batchJobId: string, opts: { limit?: number; offset?: number } = {}): Promise<BatchJobResults> {
+    const raw = await this._transport.get(
+      `batch-jobs/${seg(batchJobId)}/results`,
+      query({ limit: opts.limit, offset: opts.offset }),
+    );
+    return {
+      batchJobId: String(raw['batch_job_id'] ?? batchJobId),
+      results: ((raw['results'] as Raw[] | undefined) ?? []).map(parseBatchJobItem),
+      totalJobs: Number(raw['total_jobs'] ?? 0),
+      completedJobs: Number(raw['completed_jobs'] ?? 0),
+      failedJobs: Number(raw['failed_jobs'] ?? 0),
+    };
+  }
+
+  /**
+   * Pause a running batch (`POST batch-jobs/{batch_job_id}/pause`). Items
+   * already running finish; no other item starts until `resumeBatchJob`.
+   * Pausing a paused batch changes nothing. A batch in any other state is
+   * a 409 `ApiError` with `code` `invalid_batch_transition`.
+   */
+  async pauseBatchJob(batchJobId: string): Promise<BatchJob> {
+    return parseBatchJob(await this._transport.post(`batch-jobs/${seg(batchJobId)}/pause`, {}));
+  }
+
+  /**
+   * Resume a paused batch (`POST batch-jobs/{batch_job_id}/resume`): the
+   * items held while it was paused are queued again, each once. Resuming a
+   * running batch changes nothing. A batch in any other state is a 409
+   * `ApiError` with `code` `invalid_batch_transition`. Gated like creation
+   * (quota, payment, ConcurrencyLimitError at the tier's running batches).
+   * A 503 `ApiError` with `code` `dispatch_failed` means the items could
+   * not be queued and the batch is paused again: call it again.
+   */
+  async resumeBatchJob(batchJobId: string): Promise<BatchJob> {
+    return parseBatchJob(await this._transport.post(`batch-jobs/${seg(batchJobId)}/resume`, {}));
+  }
+
+  /**
+   * Cancel a batch and every item of it that has not ended
+   * (`POST batch-jobs/{batch_job_id}/cancel`). Completed and failed items
+   * keep their results. Cancelling a cancelled batch changes nothing. A
+   * batch that has completed or failed is a 409 `ApiError` with `code`
+   * `invalid_batch_transition`.
+   */
+  async cancelBatchJob(batchJobId: string): Promise<BatchJob> {
+    return parseBatchJob(await this._transport.post(`batch-jobs/${seg(batchJobId)}/cancel`, {}));
+  }
+
+  /**
+   * Scrape a URL and let the API choose how (`POST scraping/unified`):
+   * level 1 (direct extraction) or level 2 (the Strategy Engine), with
+   * escalation when the first fails. Needs a live API key entitled to
+   * Kolektr and Nexus (403 `test_key_not_allowed`, `module_not_entitled`).
+   * A request the API hands off (202) is followed to its result. The
+   * answer names the job; read its state and data with `getUnifiedScrape`.
+   * When the URL is behind a login the answer has `authRequired` true and
+   * nothing was scraped.
+   */
+  async unifiedScrape(url: string, opts: UnifiedScrapeOptions = {}): Promise<UnifiedScrapeResult> {
+    const body: Raw = { url };
+    if (opts.prompt !== undefined) body['prompt'] = opts.prompt;
+    if (opts.mode !== undefined) body['mode'] = opts.mode;
+    if (opts.schema !== undefined) body['schema'] = opts.schema;
+    if (opts.options !== undefined) body['options'] = opts.options;
+    if (opts.context !== undefined) body['context'] = opts.context;
+    if (opts.constraints !== undefined) body['constraints'] = opts.constraints;
+    if (opts.sessionArtifactId !== undefined) body['session_artifact_id'] = opts.sessionArtifactId;
+    const raw = await postFollowingHandoff(this._transport, 'scraping/unified', body, opts);
+    return {
+      success: raw['success'] !== false,
+      jobId: String(raw['job_id'] ?? ''),
+      level: String(raw['level'] ?? ''),
+      status: String(raw['status'] ?? ''),
+      escalationPath: parseEscalations(raw['escalation_path']),
+      message: String(raw['message'] ?? ''),
+      metadata: objOrNull(raw['metadata']),
+      authRequired: raw['auth_required'] === true,
+      discoveryId: strOrNull(raw['discovery_id']),
+    };
+  }
+
+  /**
+   * The state of a unified scrape job and, once it has one, its result
+   * (`GET scraping/unified/{job_id}`). 404 for a job that is not yours.
+   */
+  async getUnifiedScrape(jobId: string): Promise<UnifiedScrapeStatus> {
+    const raw = await this._transport.get(`scraping/unified/${seg(jobId)}`);
+    return {
+      id: String(raw['id'] ?? jobId),
+      status: String(raw['status'] ?? ''),
+      level: String(raw['level'] ?? ''),
+      progress: numOrNull(raw['progress']),
+      progressDetail: parseUnifiedProgress(objOrNull(raw['progress_detail'])),
+      createdAt: String(raw['created_at'] ?? ''),
+      updatedAt: strOrNull(raw['updated_at']),
+      completedAt: strOrNull(raw['completed_at']),
+      error: strOrNull(raw['error']),
+      result: objOrNull(raw['result']),
+      escalationPath: parseEscalations(raw['escalation_path']),
+    };
   }
 
   /**

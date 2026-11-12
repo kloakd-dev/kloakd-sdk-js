@@ -12,6 +12,8 @@
  * of kobe_scraper.api.app at kobe-scraper main 6bd19e9b, with the module
  * routers, the crawl-extract router and the /api/v1 playground and free-tier
  * routers mounted as kernel/bootstrap.py does, `{x:path}` written `{x}`.
+ * It is now that list at kobe-scraper integration/2026-11-12b (228857dc):
+ * 280 rows, without the 12 performance/... routes the API removed.
  * Each public method of each namespace is called with placeholder
  * arguments against a recording fetch.
  */

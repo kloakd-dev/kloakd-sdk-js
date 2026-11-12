@@ -8,7 +8,7 @@
  */
 
 export { Kloakd } from './client.js';
-export type { KloakdOptions, CrawlOrchestratorOptions } from './client.js';
+export type { BatchJobOptions, KloakdOptions, CrawlOrchestratorOptions, UnifiedScrapeOptions } from './client.js';
 
 export {
   ApiError,
@@ -48,6 +48,10 @@ export type {
 
 export type {
   AnalyzeResult,
+  BatchJob,
+  BatchJobItem,
+  BatchJobResults,
+  BatchJobsPage,
   ChatEvent,
   ChatTurn,
   CrawlContinueResult,
@@ -90,6 +94,10 @@ export type {
   SessionResult,
   SessionStatus,
   SiteCrawlResult,
+  UnifiedEscalation,
+  UnifiedScrapeProgress,
+  UnifiedScrapeResult,
+  UnifiedScrapeStatus,
   WorkflowExecutionResult,
   WorkflowResult,
 } from './models.js';

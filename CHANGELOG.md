@@ -5,7 +5,8 @@ Only 0.1.0 and 0.4.0 were published to npm before 0.5.0; 0.2.0 and 0.3.0 were ne
 
 ## [Unreleased]
 
-For the API on kobe-scraper main (6bd19e9b). **Breaking**: two methods and
+For the API on kobe-scraper main (6bd19e9b); the batch and unified scrape
+methods and the route list are of integration/2026-11-12b (228857dc). **Breaking**: two methods and
 several fields the API never sent are removed, so the next release is 0.7.0.
 
 ### Fixed
@@ -70,11 +71,27 @@ several fields the API never sent are removed, so the next release is 0.7.0.
   `ExportDownload`, `SavedExport`; `CRAWL_EXTRACT_MAX_LIMIT`.
 - `client.exportBatchJob` and `client.downloadBatchJob`: a batch job's
   results as json, ndjson or csv.
+- Batch jobs (`client`): `createBatchJob(urls, opts)`, `getBatchJob`,
+  `listBatchJobs`, `getBatchJobResults`, `pauseBatchJob`, `resumeBatchJob`,
+  `cancelBatchJob`. A control the batch's state does not allow is a 409
+  `ApiError` with `code` `invalid_batch_transition`; repeating a control
+  answers the batch as it is; a resume or a create that could not be queued
+  is a 503 `ApiError` with `code` `dispatch_failed` and is not retried.
+  Types `BatchJob`, `BatchJobsPage`, `BatchJobItem`, `BatchJobResults`,
+  `BatchJobOptions`.
+- Unified scrape (`client`): `unifiedScrape(url, opts)` (`POST
+  scraping/unified`, a 202 hand-off is followed) and
+  `getUnifiedScrape(jobId)`. Types `UnifiedScrapeOptions`,
+  `UnifiedScrapeResult`, `UnifiedScrapeStatus`, `UnifiedScrapeProgress`,
+  `UnifiedEscalation`.
 - `NexusVerifyResult.status`, `riskScore`, `safetyChecks`,
   `verificationResultId`, `durationMs`.
 
 ### Changed
 - Exports are streamed and sent without the per-request timeout.
+- The route list the tests check against (`tests/fixtures/routes.tsv`) is
+  that of kobe-scraper integration/2026-11-12b (228857dc): 280 routes. The
+  API removed its 12 `performance/...` routes; the SDK called none.
 
 ## [0.6.0] — 2026-11-03
 
