@@ -84,6 +84,9 @@ several fields the API never sent are removed, so this release is 0.7.0.
   `getUnifiedScrape(jobId)`. Types `UnifiedScrapeOptions`,
   `UnifiedScrapeResult`, `UnifiedScrapeStatus`, `UnifiedScrapeProgress`,
   `UnifiedEscalation`.
+- `ConcurrencyLimitError.activeCrawls` is also filled from the batch
+  limit's 409 (`createBatchJob`, `resumeBatchJob`), which sends the count
+  as `active_batches`.
 - `NexusVerifyResult.status`, `riskScore`, `safetyChecks`,
   `verificationResultId`, `durationMs`.
 

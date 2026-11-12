@@ -259,10 +259,18 @@ const scrape = await client.unifiedScrape('https://shop.example/list', {
 });
 if (scrape.authRequired) {
   // The URL is behind a login: nothing was scraped. scrape.discoveryId names the auth-chain discovery.
+} else if (scrape.status === 'failed') {
+  // The scrape failed. success is still true and there is no error text;
+  // jobId names no stored job (getUnifiedScrape would be a 404).
 } else {
   const job = await client.getUnifiedScrape(scrape.jobId);  // status, level, progress, result, escalationPath
 }
 ```
+
+Check `status`: when the scrape fails the API still answers with `success`
+true and `status` `'failed'`, without the error text, and that answer's
+`jobId` names no stored job, so `getUnifiedScrape` on it is a 404
+(`ApiError`).
 
 Options: `prompt`, `mode`, `schema`, `options`, `context`, `constraints`,
 `sessionArtifactId` (a login session), and `pollIntervalMs` /

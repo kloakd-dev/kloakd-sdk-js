@@ -59,7 +59,8 @@ describe('batch jobs: create, read, list, results', () => {
     const f = mockFetch({ detail: { error: 'concurrent_limit', message: 'Concurrent batch limit reached (2 for free tier).', tier: 'free', concurrent_limit: 2, active_batches: 2 } }, 409);
     const err = await makeClient(f).createBatchJob(['https://a/1']).catch((e) => e);
     expect(err).toBeInstanceOf(ConcurrencyLimitError);
-    expect([err.tier, err.concurrentLimit]).toEqual(['free', 2]);
+    // detail.active_batches (kernel/jobs_runs_router.py _check_batch_concurrency)
+    expect([err.tier, err.concurrentLimit, err.activeCrawls]).toEqual(['free', 2, 2]);
     expect(f).toHaveBeenCalledTimes(1);
   });
 

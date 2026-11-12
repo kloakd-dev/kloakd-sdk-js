@@ -121,7 +121,11 @@ export class RateLimitError extends KloakdError {
 export class ConcurrencyLimitError extends KloakdError {
   /** The plan's slot count. */
   readonly concurrentLimit: number | null;
-  /** Crawls and batches running or queued. */
+  /**
+   * Crawls and batches running or queued. For the batch limit
+   * (`createBatchJob`, `resumeBatchJob`) it is the API's `active_batches`:
+   * the batches pending or running.
+   */
   readonly activeCrawls: number | null;
   /** Other requests in flight. */
   readonly activeRequests: number | null;
@@ -292,7 +296,8 @@ export function raiseForStatus(
   if (statusCode === 409 && code === 'concurrent_limit') {
     throw new ConcurrencyLimitError(detail, {
       concurrentLimit: num(detailObj['concurrent_limit']),
-      activeCrawls: num(detailObj['active_crawls']),
+      // The batch limit (kernel/jobs_runs_router.py _check_batch_concurrency) sends active_batches.
+      activeCrawls: num(detailObj['active_crawls']) ?? num(detailObj['active_batches']),
       activeRequests: num(detailObj['active_requests']),
       tier: str('tier') ?? '',
     });

@@ -388,6 +388,11 @@ export class Kloakd {
    * answer names the job; read its state and data with `getUnifiedScrape`.
    * When the URL is behind a login the answer has `authRequired` true and
    * nothing was scraped.
+   *
+   * Check `status`: when the scrape fails the API still answers with
+   * `success` true and `status` `'failed'`, without the error text, and
+   * that answer's `jobId` names no stored job, so `getUnifiedScrape` on it
+   * is the API's 404.
    */
   async unifiedScrape(url: string, opts: UnifiedScrapeOptions = {}): Promise<UnifiedScrapeResult> {
     const body: Raw = { url };
