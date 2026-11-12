@@ -90,12 +90,49 @@ const lists = await client.crawl('https://books.toscrape.com', {
 });
 ```
 
-`maxDepth` and `maxPages` are optional; unset, the API uses your tier's
-defaults. `client.crawl` records a page that fails on that page, but stops
+`maxDepth` and `maxPages` are optional; unset, they are not sent and the API
+uses your tier's defaults. `client.crawl` records a page that fails on that page, but stops
 and throws on payment, quota, billing, entitlement, authentication and
 rate-limit errors. `client.crawlStream` yields the same work as progress
 events (`discovery_started`, `discovery_complete`, `page_fetching`,
 `page_fetched`, `page_failed`, `crawl_complete`); these are made by the SDK.
+
+### Held, partial and continued crawls
+
+A crawl can end three ways that are not a failure:
+
+```typescript
+const crawl = await client.webgrph.crawl('https://example.com');
+
+if (crawl.held) {
+  // Status held_quota: the plan has no quota left. The crawl is paused, not
+  // failed, and resumes under the same id when quota returns.
+  console.log(crawl.message);
+  const later = await client.webgrph.waitForCrawl(crawl.crawlId); // after a top-up or upgrade
+} else if (crawl.isPartial && crawl.resumable) {
+  // It stopped at its time budget with pages left.
+  console.log(crawl.partialReason, crawl.pagesFetched, 'of', crawl.pagesDiscovered);
+  await client.webgrph.continueCrawl(crawl.crawlId);              // 202
+  const rest = await client.webgrph.waitForCrawl(crawl.crawlId);
+}
+```
+
+- **Held** (`held` true, `status` `held_quota`): returned at once, never
+  thrown, with `ok` false, `error` null and no pages loaded. `crawlAll`
+  yields no pages; `client.crawl` returns a `SiteCrawlResult` with `held`
+  true and fetches nothing. If quota does not return within 30 days the
+  crawl ends `failed` (`errorCode` `held_quota_expired`), and the wait
+  throws `JobFailedError` like any failed crawl.
+- **Partial** (`isPartial` true): the crawl stopped before asking for every
+  page it found; `partialReason` is `time_budget`, `max_pages` or `error`.
+  `pagesDiscovered`, `pagesFetched` and `pagesUnfetched` say what it covered.
+  These are null until the crawl has reported them.
+- **Continue**: `continueCrawl` works only when `resumable` is true. Any
+  other crawl (not resumable, still running, already continuing, unknown) is
+  a 409 `ApiError`.
+
+Each `PageNode` has `fetchStatus` (`fetched`, `unfetched` or `not_requested`)
+and `fetchError`.
 
 ### Crawl pages
 
@@ -148,18 +185,51 @@ console.log(saved.bytes, saved.jobStatus);
 ```
 
 `crawlExtract(url, options)` starts the job and waits for it; a failed job
-throws `JobFailedError`, a cancelled one is returned. `exportCrawlExtract`
-returns the response body as a `ReadableStream` (`body`, `contentType`,
-`filename`, `jobStatus`) for runtimes without a file system;
-`downloadCrawlExtract` needs Node. An export of a job that is still running,
-or that failed, holds the rows written so far: check `jobStatus`.
+throws `JobFailedError`, a cancelled one is returned, and so is one whose
+crawl is held for quota (`held` true; wait again with `waitForCrawlExtract`
+when quota returns). The status has a `crawl` object saying what the crawl
+covered (`status`, `isPartial`, `partialReason`, `pagesDiscovered`,
+`pagesFetched`, `pagesUnfetched`, `cancelled`, `rootUnfetched`).
+`exportCrawlExtract` returns the response body as a `ReadableStream` (`body`,
+`contentType`, `filename`, `jobStatus`, `crawl`) for runtimes without a file
+system; `downloadCrawlExtract` needs Node. An export of a job that is still
+running, or that failed, holds the rows written so far: check `jobStatus`,
+and `crawl.isPartial` for a crawl that did not cover the whole site (`crawl`
+is read from the `X-Crawl-*` headers; a value the API left out is null).
 `getCrawlExtractPages` lists each page with its status and method;
 `cancelCrawlExtract` stops a job (409 once it has ended). Exports have no
 per-request timeout.
 
 `client.exportBatchJob(batchJobId, { format })` and
 `client.downloadBatchJob(batchJobId, path, { format })` do the same for a
-batch job's results.
+batch job's results. The batch export does not say the job's state:
+`jobStatus` and `crawl` are null there.
+
+## Login sessions
+
+To crawl or fetch behind a login, create a session and pass its id as
+`sessionArtifactId`.
+
+```typescript
+// From cookies exported from your own browser: ready at once (201).
+const session = await client.fetchyr.startLoginSession('https://site.example/account', {
+  method: 'cookies',
+  cookies: [{ name: 'sid', value: process.env.SITE_SID!, domain: '.site.example' }],
+  userAgent: 'Mozilla/5.0 ...', // the user agent of the browser the cookies came from
+});
+console.log(session.status, session.sessionArtifactId, session.cookiesKept, session.cookiesDropped);
+
+// Or interactively (the default): the API answers 202 with what to do next.
+const started = await client.fetchyr.startLoginSession('https://site.example/account');
+console.log(started.status, started.discoveryId, started.next);
+
+// A session lives 8 hours. Is it still usable?
+const state = await client.fetchyr.getSession(session.sessionArtifactId!);
+if (state.status === 'paused') {
+  console.log(state.pauseReason, state.pauseMessage);
+  await client.fetchyr.resumeSession(state.artifactId); // 409 if it is not paused, or the site signed it out
+}
+```
 
 ## Extraction schemas
 
@@ -222,11 +292,11 @@ Event types: `thinking`, `interpretation`, `progress`, `results`, `error`,
 | Namespace | Methods |
 |---|---|
 | `evadr` | `fetch`, `fetchAsync`, `waitForJob`, `fetchStream`, `getJob`, `jobEvents`, `analyze`, `scan`, `profile`, `listVendors`, `listProxies`, `storeProxy`, `deleteProxy` |
-| `webgrph` | `startCrawl`, `crawl`, `crawlAll`, `crawlStream`, `getCrawlStatus`, `cancelCrawl`, `crawlEvents`, `getCrawlPages`, `crawlAllPages`, `startCrawlExtract`, `crawlExtract`, `getCrawlExtract`, `waitForCrawlExtract`, `getCrawlExtractResults`, `iterCrawlExtractResults`, `crawlExtractAllResults`, `getCrawlExtractPages`, `exportCrawlExtract`, `downloadCrawlExtract`, `cancelCrawlExtract`, `readerView`, `detectedApis`, `listSessions`, `saveSession`, `getSession`, `deleteSession`, `endSession`, `updateSessionJob` |
+| `webgrph` | `startCrawl`, `crawl`, `crawlAll`, `crawlStream`, `getCrawlStatus`, `waitForCrawl`, `continueCrawl`, `cancelCrawl`, `crawlEvents`, `getCrawlPages`, `crawlAllPages`, `startCrawlExtract`, `crawlExtract`, `getCrawlExtract`, `waitForCrawlExtract`, `getCrawlExtractResults`, `iterCrawlExtractResults`, `crawlExtractAllResults`, `getCrawlExtractPages`, `exportCrawlExtract`, `downloadCrawlExtract`, `cancelCrawlExtract`, `readerView`, `detectedApis`, `listSessions`, `saveSession`, `getSession`, `deleteSession`, `endSession`, `updateSessionJob` |
 | `skanyr` | `listSites`, `siteFromCrawl`, `getSite`, `updateSite`, `deleteSite`, `sync`, `exportSite`, `getSiteApis`, `getSiteResources`, `searchSite`, `getFindings`, `getTechnologies`, `getTechnologyEvidence`, `listSnapshots`, `getTimeline`, `getTimelineSnapshot`, `diff`, `getGraph`, `getGraphStats`, `getSubgraph`, `listResources`, `getResource`, `search`, `extract`, `getExtractionText`, `getExtractionStructure` |
 | `nexus` | `analyze`, `synthesize`, `verify`, `reason` |
 | `parlyr` | `parse`, `chat`, `chatStream`, `deleteSession` |
-| `fetchyr` | `storeCredentials`, `listCredentials`, `deleteCredentials`, `authenticate`, `listSessions`, `invalidateSession`, `terminateSession`, `createWorkflow`, `listWorkflows`, `getWorkflow`, `updateWorkflow`, `deleteWorkflow`, `getWorkflowStatistics`, `executeWorkflow`, `getExecution`, `resumeExecution`, `createMultiSiteWorkflow`, `detectForms`, `fillForm`, `detectMfa`, `submitMfa`, `listMfaChallenges`, `getMfaChallenge`, `getMfaStatistics`, `checkDuplicate`, `createDedupSession`, `listDedupSessions`, `getDedupSession`, `getDedupSessionStatistics`, `getDedupDomainStatistics`, `discoverAuthChain`, `getAuthChainStatus`, `resumeAuthChainCredentials`, `resumeAuthChainMfa` |
+| `fetchyr` | `storeCredentials`, `listCredentials`, `deleteCredentials`, `authenticate`, `startLoginSession`, `getSession`, `resumeSession`, `listSessions`, `invalidateSession`, `terminateSession`, `createWorkflow`, `listWorkflows`, `getWorkflow`, `updateWorkflow`, `deleteWorkflow`, `getWorkflowStatistics`, `executeWorkflow`, `getExecution`, `resumeExecution`, `createMultiSiteWorkflow`, `detectForms`, `fillForm`, `detectMfa`, `submitMfa`, `listMfaChallenges`, `getMfaChallenge`, `getMfaStatistics`, `checkDuplicate`, `createDedupSession`, `listDedupSessions`, `getDedupSession`, `getDedupSessionStatistics`, `getDedupDomainStatistics`, `discoverAuthChain`, `getAuthChainStatus`, `resumeAuthChainCredentials`, `resumeAuthChainMfa` |
 | `kolektr` | `page`, `pageAll`, `extractHtml`, `getApiData`, `getApiDataPaginated`, `extractAllApiData`, `listContent`, `getContent`, `deleteContent`, `listJobs`, `getJob`, `getJobStatus`, `listScrapers`, `createScraper`, `getScraper`, `updateScraper`, `deleteScraper` |
 | client | `crawl`, `crawlStream`, `getHandoff`, `waitForHandoff`, `exportBatchJob`, `downloadBatchJob` |
 

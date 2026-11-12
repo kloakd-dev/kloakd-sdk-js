@@ -124,7 +124,7 @@ describe('crawl pages (GAP-API-9/10, modules/webgrph/router.py get_crawl_pages)'
     expect([q.get('include_grouping'), q.get('limit')]).toEqual(['true', '1000']);
     expect(plain.nodes.map((n) => n.isGrouping)).toEqual([false, true]);
     expect(grouped.nodes[1]!.parentUrl).toBe('https://s/');
-    expect(grouped.nodes[0]!.crawlParentUrl).toBeNull();
+    expect(grouped.nodes[0]).not.toHaveProperty('crawlParentUrl');
   });
 
   it('refuses a limit outside 1–1000 before sending (the API 422s)', async () => {
@@ -163,14 +163,17 @@ describe('crawl pages (GAP-API-9/10, modules/webgrph/router.py get_crawl_pages)'
     expect(r.totalPages).toBe(1);
   });
 
-  it('reads crawl_parent_url and is_grouping from a stored page record', async () => {
+  it('a listed page has its parent in parent_url; crawl_parent_url and status_code are not in the listing', async () => {
+    // HierarchyNodeResponse (modules/webgrph/router.py) has neither field.
     const f = mockFetch({
       crawl_id: 'c1',
-      nodes: [{ url: 'https://s/b', parent_url: 'https://s/#g', is_grouping: false, crawl_parent_url: 'https://s/a', depth: 2 }],
+      nodes: [{ id: '3', url: 'https://s/b', parent_url: 'https://s/a', children_urls: [], depth: 2, category: 'page', metadata: { is_grouping: false } }],
       total: 1,
     });
     const { nodes } = await makeClient(f).webgrph.getCrawlPages('c1');
-    expect([nodes[0]!.isGrouping, nodes[0]!.crawlParentUrl]).toEqual([false, 'https://s/a']);
+    expect([nodes[0]!.isGrouping, nodes[0]!.parentUrl]).toEqual([false, 'https://s/a']);
+    expect(nodes[0]).not.toHaveProperty('crawlParentUrl');
+    expect(nodes[0]).not.toHaveProperty('statusCode');
   });
 
   it("a bad cursor is the API's 422, an ApiError", async () => {

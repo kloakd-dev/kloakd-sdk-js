@@ -79,7 +79,6 @@ export interface PageNode {
   url: string;
   depth: number;
   title: string | null;
-  statusCode: number | null;
   children: string[];
   /** The node's parent in the listed tree (by default the page the crawl found it on). */
   parentUrl?: string | null;
@@ -89,18 +88,28 @@ export interface PageNode {
    */
   isGrouping?: boolean;
   /**
-   * The page the crawl found this page on, when the tree files it under a
-   * grouping folder. Stored page records and the `pipeline_complete` event's
-   * pages carry it; the pages listing does not (its parentUrl already is it).
+   * Whether the crawl has this page (`metadata.fetch_status`): `fetched`,
+   * `unfetched` (asked for and not obtained; `fetchError` says why) or
+   * `not_requested` (found, and the crawl stopped before asking for it).
+   * Null when the API gave none.
    */
-  crawlParentUrl?: string | null;
+  fetchStatus: string | null;
+  /** Why an `unfetched` page was not obtained (`metadata.fetch_error`), or null. */
+  fetchError: string | null;
 }
 
+/**
+ * A crawl as `webgrph.crawl` / `webgrph.waitForCrawl` return it. `hasMore`
+ * and `total` are the SDK's own (`hasMore` is always false: every page was
+ * loaded; `total` is `pages.length`).
+ */
 export interface CrawlResult extends Paginated {
+  /** True when the crawl completed. A partial crawl also completes: see `isPartial`. */
   success: boolean;
   crawlId: string;
-  /** queued, crawling, completed, failed or cancelled. */
+  /** queued, crawling, completed, failed, cancelled or held_quota. */
   status: string;
+  /** The URL given to `crawl`; empty after `waitForCrawl` (the status answer has none). */
   url: string;
   /** Fetched pages only (grouping folders are not counted). */
   totalPages: number;
@@ -109,7 +118,76 @@ export interface CrawlResult extends Paginated {
   pages: PageNode[];
   artifactId: string | null;
   error: string | null;
+  /** A machine-readable reason for a failed crawl (for example `root_unfetched`, `held_quota_expired`), or null. */
+  errorCode: string | null;
+  /** The API's note on the crawl's state; for a held crawl, why it is held. Not an error. */
+  message: string | null;
+  /**
+   * True when the crawl is paused because the organisation's quota ran out
+   * (`status` is `held_quota`). It has not failed: it resumes by itself,
+   * under the same id, when quota returns (an upgrade, a top-up or the next
+   * billing period); call `webgrph.waitForCrawl(crawlId)` again then. A
+   * crawl held for 30 days ends as failed with `errorCode`
+   * `held_quota_expired`. `pages` is empty while held.
+   */
+  held: boolean;
+  /** True when the crawl stopped before asking for every page it found. Null until the crawl reports it. */
+  isPartial: boolean | null;
+  /** Why it is partial: `time_budget`, `max_pages` or `error`. */
+  partialReason: string | null;
+  /** True when `webgrph.continueCrawl(crawlId)` can carry the crawl on. */
+  resumable: boolean | null;
+  /** Pages the crawl found. Null until reported. */
+  pagesDiscovered: number | null;
+  /** Pages the crawl fetched. Null until reported. */
+  pagesFetched: number | null;
+  /** Pages the crawl asked for and could not fetch. Null until reported. */
+  pagesUnfetched: number | null;
   readonly ok: boolean;
+}
+
+/** `webgrph.continueCrawl`: the crawl is queued again under the same id. */
+export interface CrawlContinueResult {
+  success: boolean;
+  crawlId: string;
+  /** `queued`. */
+  status: string;
+}
+
+/**
+ * What a crawl-extract job's crawl did (the status answer's `crawl`). The
+ * counts and `isPartial` are null until the crawl has reported them.
+ */
+export interface CrawlExtractCrawl {
+  /** The crawl's own status, including `held_quota`. */
+  status: string | null;
+  isPartial: boolean | null;
+  /** `time_budget`, `max_pages` or `error`. */
+  partialReason: string | null;
+  pagesDiscovered: number | null;
+  pagesFetched: number | null;
+  pagesUnfetched: number | null;
+  cancelled: boolean;
+  /** True when the crawl could not fetch its first page. */
+  rootUnfetched: boolean;
+  /** The crawl's error when it failed. */
+  error: string | null;
+  errorCode: string | null;
+}
+
+/**
+ * What an export's rows cover, from its `X-Crawl-*` response headers. A
+ * field is null when the API did not send its header.
+ */
+export interface ExportCrawl {
+  status: string | null;
+  isPartial: boolean | null;
+  partialReason: string | null;
+  pagesDiscovered: number | null;
+  pagesFetched: number | null;
+  pagesUnfetched: number | null;
+  cancelled: boolean | null;
+  rootUnfetched: boolean | null;
 }
 
 // ── Crawl-extract (webgrph/crawl-extract) and exports ────────────────────────
@@ -199,6 +277,18 @@ export interface CrawlExtractStatus {
   /** Pages by how they were extracted (`failed` for those that were not). */
   pagesByMethod: Record<string, number>;
   shapes: CrawlExtractShape[];
+  /**
+   * What the job's crawl did; null when the API has no crawl for the job. A
+   * completed job whose crawl is partial holds the rows of the pages that
+   * crawl fetched, not of the whole site.
+   */
+  crawl: CrawlExtractCrawl | null;
+  /**
+   * True when the job's crawl is paused because the organisation's quota
+   * ran out (`crawl.status` is `held_quota`). The job has not failed and is
+   * not finished: it carries on by itself when quota returns.
+   */
+  readonly held: boolean;
   /** True when the job has ended (completed, failed or cancelled). */
   readonly finished: boolean;
   /** True when the job completed. */
@@ -267,10 +357,18 @@ export interface ExportDownload {
   /** The file name the API suggests (Content-Disposition). */
   filename: string | null;
   /**
-   * The job's status when the export started (`X-Job-Status`; crawl-extract
-   * only). A job that has not completed exports the rows it has so far.
+   * The job's status when the export started (`X-Job-Status`). Only the
+   * crawl-extract export sends it; it is null for a batch export
+   * (`client.exportBatchJob`), whose route sends no such header. A job that
+   * has not completed exports the rows it has so far.
    */
   jobStatus: string | null;
+  /**
+   * What the job's crawl covered (`X-Crawl-*` headers). Only the
+   * crawl-extract export sends them; null for a batch export and when the
+   * API sent none.
+   */
+  crawl: ExportCrawl | null;
 }
 
 /** An export written to a file. */
@@ -279,7 +377,10 @@ export interface SavedExport {
   bytes: number;
   contentType: string | null;
   filename: string | null;
+  /** As `ExportDownload.jobStatus`: null for a batch export. */
   jobStatus: string | null;
+  /** As `ExportDownload.crawl`: null for a batch export. */
+  crawl: ExportCrawl | null;
 }
 
 /** A crawl progress event: a pipeline event with the crawl's id. */
@@ -299,7 +400,7 @@ export interface NexusAnalyzeResult {
   pageType: string;
   confidence: number;
   artifactId: string | null;
-  error: string | null;
+  /** Always true: a failed analysis throws. */
   readonly ok: boolean;
 }
 
@@ -314,7 +415,7 @@ export interface NexusSynthesisResult {
   steps: Record<string, unknown>[];
   confidence: number;
   synthesisTimeMs: number;
-  error: string | null;
+  /** Always true: a failed synthesis throws. */
   readonly ok: boolean;
 }
 
@@ -338,7 +439,7 @@ export interface NexusVerifyResult {
   safetyChecks: NexusSafetyCheck[];
   verificationResultId: string | null;
   durationMs: number;
-  error: string | null;
+  /** The same as `verified`. */
   readonly ok: boolean;
 }
 
@@ -469,7 +570,7 @@ export interface DuplicateCheckResult {
 
 // ── Kolektr ───────────────────────────────────────────────────────────────────
 
-export interface ExtractionResult extends Paginated {
+export interface ExtractionResult {
   success: boolean;
   url: string;
   method: string;
@@ -483,7 +584,69 @@ export interface ExtractionResult extends Paginated {
   authRequired: boolean;
   /** The auth-chain discovery id when `authRequired`. */
   discoveryId: string | null;
+  /** For a fresh scrape, the level it ran at: `level1` or `level2`; otherwise null. */
+  level: string | null;
+  /** Why that level: requested, or (prefixed `auto:`) what automatic mode chose it for. */
+  levelReason: string | null;
+  /** When `authRequired`: the ways to log in that the API offers (`login_options`), or null. */
+  loginOptions: Record<string, unknown> | null;
   readonly ok: boolean;
+}
+
+/** One cookie for `fetchyr.startLoginSession` with `method: 'cookies'`, as a browser exports it. */
+export interface LoginCookie {
+  name: string;
+  value: string;
+  domain?: string;
+  path?: string;
+  /** Expiry as seconds since the epoch. */
+  expires?: number;
+  /** Expiry as browser extensions export it. */
+  expirationDate?: number;
+  secure?: boolean;
+  httpOnly?: boolean;
+  sameSite?: string;
+}
+
+/** `fetchyr.startLoginSession` (modules/fetchyr/router.py LoginSessionResponse). */
+export interface LoginSession {
+  /** `interactive` or `cookies`. */
+  method: string;
+  /** `waiting_for_login` (interactive: the login is still to be done) or `ready` (cookies: the session exists). */
+  status: string;
+  targetUrl: string;
+  /** Interactive: the auth-chain discovery to follow (`fetchyr.getAuthChainStatus`). */
+  discoveryId: string | null;
+  /** Cookies: the session's artifact id, for `sessionArtifactId` options and `fetchyr.getSession`. */
+  sessionArtifactId: string | null;
+  /** What to call next, in the API's words. */
+  next: Record<string, string>;
+  /** Cookies: how many of the given cookies the session keeps. */
+  cookiesKept: number | null;
+  /** Cookies: the names of the cookies the API did not keep. */
+  cookiesDropped: string[];
+  /** The limits the API keeps on the session's use. */
+  protections: Record<string, unknown>;
+  message: string;
+}
+
+/** A login session's state (modules/fetchyr/router.py SessionStatusResponse). */
+export interface SessionStatus {
+  artifactId: string;
+  /** `active`, `paused`, `EXPIRED` or `INVALIDATED`. */
+  status: string;
+  targetDomain: string | null;
+  authMethod: string | null;
+  createdAt: string | null;
+  expiresAt: string | null;
+  lastUsedAt: string | null;
+  pausedAt: string | null;
+  /** `logged_out`, `rate_limited` or `challenged`. */
+  pauseReason: string | null;
+  pauseMessage: string | null;
+  identity: Record<string, unknown>;
+  requestsThisHour: number | null;
+  protections: Record<string, unknown>;
 }
 
 // ── High-level orchestrator ───────────────────────────────────────────────────
@@ -512,6 +675,18 @@ export interface SiteCrawlResult {
   pages: CrawlPage[];
   crawlArtifactId: string | null;
   error: string | null;
+  /** The discovery crawl's id (for `webgrph.waitForCrawl` and `webgrph.continueCrawl`). */
+  crawlId: string;
+  /** The discovery crawl's status: completed, cancelled or held_quota. */
+  status: string;
+  /** The API's note on the crawl's state; for a held crawl, why it is held. */
+  message: string | null;
+  /**
+   * True when the discovery crawl is paused because the organisation's
+   * quota ran out (see `CrawlResult.held`). No page was fetched: `pages` is
+   * empty, `success` is false and `error` is null.
+   */
+  held: boolean;
 }
 
 /**

@@ -17,8 +17,9 @@ function parseExtraction(raw: Record<string, unknown>, url: string): ExtractionR
     error: (raw['error'] as string | undefined) ?? null,
     authRequired: Boolean(raw['auth_required']),
     discoveryId: (raw['discovery_id'] as string | undefined) ?? null,
-    hasMore: Boolean(raw['has_more']),
-    total: Number(raw['total'] ?? 0),
+    level: (raw['level'] as string | undefined) ?? null,
+    levelReason: (raw['level_reason'] as string | undefined) ?? null,
+    loginOptions: (raw['login_options'] as Record<string, unknown> | undefined) ?? null,
   };
   return { ...result, get ok() { return result.success && result.error === null; } };
 }

@@ -8,7 +8,7 @@
 
 import type { HttpTransport } from './_http.js';
 import { KloakdError } from './errors.js';
-import type { ExportDownload, ExportFormat, SavedExport } from './models.js';
+import type { ExportCrawl, ExportDownload, ExportFormat, SavedExport } from './models.js';
 
 export const EXPORT_FORMATS: readonly ExportFormat[] = ['json', 'ndjson', 'csv'];
 
@@ -25,6 +25,37 @@ function filenameOf(disposition: string | null): string | null {
   return match ? match[1]! : null;
 }
 
+/**
+ * What the export's `X-Crawl-*` headers say of the job's crawl
+ * (modules/webgrph/crawl_extract_router.py _crawl_headers). The API leaves
+ * out a header whose value the crawl has not reported; null when it sent
+ * none of them (the batch export never does).
+ */
+export function exportCrawl(headers: { get(name: string): string | null }): ExportCrawl | null {
+  const text = (name: string): string | null => headers.get(name);
+  const flag = (name: string): boolean | null => {
+    const v = headers.get(name);
+    return v === null ? null : v.toLowerCase() === 'true';
+  };
+  const count = (name: string): number | null => {
+    const v = headers.get(name);
+    if (v === null || v.trim() === '') return null;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  };
+  const crawl: ExportCrawl = {
+    status: text('x-crawl-status'),
+    isPartial: flag('x-crawl-partial'),
+    partialReason: text('x-crawl-partial-reason'),
+    pagesDiscovered: count('x-crawl-pages-discovered'),
+    pagesFetched: count('x-crawl-pages-fetched'),
+    pagesUnfetched: count('x-crawl-pages-unfetched'),
+    cancelled: flag('x-crawl-cancelled'),
+    rootUnfetched: flag('x-crawl-root-unfetched'),
+  };
+  return Object.values(crawl).every((v) => v === null) ? null : crawl;
+}
+
 /** GET an export route and return its body as a stream, with what its headers say. */
 export async function openExport(
   t: HttpTransport,
@@ -38,6 +69,7 @@ export async function openExport(
     contentType: resp.headers.get('content-type'),
     filename: filenameOf(resp.headers.get('content-disposition')),
     jobStatus: resp.headers.get('x-job-status'),
+    crawl: exportCrawl(resp.headers),
   };
 }
 
@@ -69,5 +101,5 @@ export async function saveExport(
     reader.releaseLock();
     await file.close();
   }
-  return { path: filePath, bytes, contentType: download.contentType, filename: download.filename, jobStatus: download.jobStatus };
+  return { path: filePath, bytes, contentType: download.contentType, filename: download.filename, jobStatus: download.jobStatus, crawl: download.crawl };
 }

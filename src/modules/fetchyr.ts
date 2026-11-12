@@ -5,9 +5,12 @@ import { query, seg } from '../_params.js';
 import type {
   DuplicateCheckResult,
   FormDetectionResult,
+  LoginCookie,
+  LoginSession,
   MfaChallenge,
   MfaDetectionResult,
   SessionResult,
+  SessionStatus,
   WorkflowExecutionResult,
   WorkflowResult,
 } from '../models.js';
@@ -49,6 +52,42 @@ function parseChallenge(raw: Record<string, unknown>): MfaChallenge {
     expiresAt: (raw['expires_at'] as string | undefined) ?? null,
     createdAt: (raw['created_at'] as string | undefined) ?? null,
   };
+}
+
+const optStr = (v: unknown): string | null => (v === undefined || v === null ? null : String(v));
+
+function parseSessionStatus(raw: Record<string, unknown>, artifactId: string): SessionStatus {
+  return {
+    artifactId: String(raw['artifact_id'] ?? artifactId),
+    status: String(raw['status'] ?? ''),
+    targetDomain: optStr(raw['target_domain']),
+    authMethod: optStr(raw['auth_method']),
+    createdAt: optStr(raw['created_at']),
+    expiresAt: optStr(raw['expires_at']),
+    lastUsedAt: optStr(raw['last_used_at']),
+    pausedAt: optStr(raw['paused_at']),
+    pauseReason: optStr(raw['pause_reason']),
+    pauseMessage: optStr(raw['pause_message']),
+    identity: (raw['identity'] as Record<string, unknown> | undefined) ?? {},
+    requestsThisHour: raw['requests_this_hour'] != null ? Number(raw['requests_this_hour']) : null,
+    protections: (raw['protections'] as Record<string, unknown> | undefined) ?? {},
+  };
+}
+
+/** Options for `startLoginSession` (modules/fetchyr/router.py LoginSessionRequest). */
+export interface LoginSessionOptions {
+  /**
+   * `interactive` (the API's default): the API opens the site's login and
+   * asks for the credentials (and an MFA code) through the auth-chain
+   * methods. `cookies`: use a session you already have in your own browser.
+   */
+  method?: 'interactive' | 'cookies';
+  /** `cookies` method: your browser's cookies for the site. Required for it. */
+  cookies?: LoginCookie[];
+  /** `cookies` method: your browser's `navigator.userAgent`. Required for it. */
+  userAgent?: string;
+  /** Two-letter country the session's exit is in (where the account usually logs in from). */
+  country?: string;
 }
 
 /** A dependency between two sites of a multi-site workflow (modules/fetchyr/router.py SiteDependencyModel). */
@@ -115,6 +154,57 @@ export class FetchyrNamespace {
 
   async invalidateSession(artifactId: string): Promise<void> {
     await this._t.delete(`fetchyr/sessions/${seg(artifactId)}`);
+  }
+
+  /**
+   * Start a session logged in as your own account on a site
+   * (`POST fetchyr/login-sessions`). Interactive (the default): the answer
+   * is `waiting_for_login` with a `discoveryId`; give the credentials
+   * through `resumeAuthChainCredentials` / `resumeAuthChainMfa` and follow
+   * `getAuthChainStatus`. With `method: 'cookies'` the session is made from
+   * `cookies` and `userAgent` at once: `status` is `ready` and
+   * `sessionArtifactId` is the id to pass as `sessionArtifactId` to fetch,
+   * crawl and extract. The cookies method without cookies or a user agent
+   * is a 422 (ApiError). Only the options given are sent.
+   */
+  async startLoginSession(targetUrl: string, opts: LoginSessionOptions = {}): Promise<LoginSession> {
+    const body: Record<string, unknown> = { target_url: targetUrl };
+    if (opts.method !== undefined) body['method'] = opts.method;
+    if (opts.cookies !== undefined) body['cookies'] = opts.cookies;
+    if (opts.userAgent !== undefined) body['user_agent'] = opts.userAgent;
+    if (opts.country !== undefined) body['country'] = opts.country;
+    const raw = await this._t.post('fetchyr/login-sessions', body);
+    return {
+      method: String(raw['method'] ?? opts.method ?? 'interactive'),
+      status: String(raw['status'] ?? ''),
+      targetUrl: String(raw['target_url'] ?? targetUrl),
+      discoveryId: optStr(raw['discovery_id']),
+      sessionArtifactId: optStr(raw['session_artifact_id']),
+      next: (raw['next'] as Record<string, string> | undefined) ?? {},
+      cookiesKept: raw['cookies_kept'] != null ? Number(raw['cookies_kept']) : null,
+      cookiesDropped: (raw['cookies_dropped'] as string[] | undefined) ?? [],
+      protections: (raw['protections'] as Record<string, unknown> | undefined) ?? {},
+      message: String(raw['message'] ?? ''),
+    };
+  }
+
+  /**
+   * A login session's state (`GET fetchyr/sessions/{artifact_id}`): active,
+   * paused (with `pauseReason` and `pauseMessage`), EXPIRED or INVALIDATED,
+   * and the protections on its use. An unknown id is a 404 (ApiError).
+   */
+  async getSession(artifactId: string): Promise<SessionStatus> {
+    return parseSessionStatus(await this._t.get(`fetchyr/sessions/${seg(artifactId)}`), artifactId);
+  }
+
+  /**
+   * Put a paused session back to use
+   * (`POST fetchyr/sessions/{artifact_id}/resume`). A session that is not
+   * paused, or that the site signed out (`pauseReason` `logged_out`: log in
+   * again with `startLoginSession`), is a 409 (ApiError).
+   */
+  async resumeSession(artifactId: string): Promise<SessionStatus> {
+    return parseSessionStatus(await this._t.post(`fetchyr/sessions/${seg(artifactId)}/resume`, {}), artifactId);
   }
 
   /** Alias of invalidateSession. */

@@ -1,7 +1,7 @@
-# Routes the SDK calls (0.6.0)
+# Routes the SDK calls (unreleased; after 0.6.0)
 
 Checked against the API's route list (`tests/fixtures/routes.tsv`, generated
-from kobe-scraper 4fb33ea4 with the module routers mounted as
+from kobe-scraper main 6bd19e9b with the module routers mounted as
 `kernel/bootstrap.py` does). `tests/contract.test.ts` calls every public
 method and fails on any request that is not a live route.
 
@@ -22,7 +22,7 @@ All paths are under `/api/v1/organizations/{organization_id}/`.
 | POST/DELETE | evadr/proxies[/{name}] | live | unchanged |
 | POST | fetchyr/login | wrong path and fields | `authenticate(credentialName, targetUrl)` → POST fetchyr/authenticate |
 | POST | fetchyr/fetch | removed | use `evadr.fetch(url, {sessionArtifactId})` |
-| GET | fetchyr/sessions/{id} | removed | `getSession` dropped (list and delete remain) |
+| GET | fetchyr/sessions/{id} | removed then | `getSession` dropped in 0.3.0; the route is live again and `fetchyr.getSession` is back (see "Changed for 0.7.0") |
 | DELETE | fetchyr/sessions/{id} | live | unchanged |
 | POST | fetchyr/workflows | wrong fields (`url`) | `{name, steps, description?, workflow_type?}`; reads `id` |
 | POST | fetchyr/workflows/{id}/execute | wrong fields (empty body) | `{target_url, session_artifact_id?, input_data?}` |
@@ -71,8 +71,10 @@ from skanyr to webgrph).
 APIs, resources, search, findings, technologies, snapshots, timeline, diff,
 graph, extraction text and structure.
 
-Not covered: `GET skanyr/resources/{id}/download` (binary body) and
-`GET parlyr/chat/{id}/events`.
+Not covered then: `GET skanyr/resources/{id}/download` (binary body) and
+`GET parlyr/chat/{id}/events`. The full list of what the SDK does not cover
+now is whatever `tests/fixtures/routes.tsv` holds that
+`tests/contract.test.ts` does not call.
 
 ## Changed in 0.4.0
 
@@ -106,11 +108,38 @@ route list.
 `tests/contract.test.ts` checks that each of the nine methods follows a 202
 through a live poll route.
 
-## Changed after 0.6.0 (unreleased)
+## Changed for 0.7.0 (unreleased), second part
 
-Checked against kobe-scraper integration/2026-11-12 (e5e358aa). The route
-list fixture was edited by hand for these routes: POST nexus/execute removed,
-the six crawl-extract routes and the batch export added.
+Checked against kobe-scraper main 6bd19e9b. The route list fixture is now
+generated again, not edited: every route of the API app (292 rows), with
+`{x:path}` parameters written `{x}`. The five `webgrph/analytics/...`
+dashboard routes that 0.4.0 left in the list are gone from the API.
+
+| Method | Path | 0.7.0 |
+|---|---|---|
+| GET | skanyr/extractions/{content_hash}/text | the answer is `text/plain`; `skanyr.getExtractionText` returns the string (it returned `{}` before) |
+| GET | webgrph/crawl/{id} | also reads `message`, `error_code`, `is_partial`, `partial_reason`, `resumable`, `pages_discovered`, `pages_fetched`, `pages_unfetched`. Status `held_quota` ends the wait: `crawl`, `waitForCrawl` and `crawlAll` return, they do not throw and do not poll to the timeout |
+| POST | webgrph/crawl/{id}/continue | new `webgrph.continueCrawl`; answers 202 `{success, crawl_id, status}`; 409 for a crawl that is not resumable, has not ended, is already continuing, or is not yours |
+| GET | webgrph/crawl/{id}/pages | reads `metadata.fetch_status` and `metadata.fetch_error`; `statusCode` and `crawlParentUrl` are removed from `PageNode` (the API never sent them) |
+| GET | webgrph/crawl-extract/{job_id} | reads the `crawl` object (`status`, `is_partial`, `partial_reason`, `pages_discovered`, `pages_fetched`, `pages_unfetched`, `cancelled`, `root_unfetched`, `error`, `error_code`); `waitForCrawlExtract` returns when the job's crawl is `held_quota` |
+| GET | webgrph/crawl-extract/{job_id}/export | reads the `X-Crawl-*` headers into `crawl` |
+| GET | batch-jobs/{batch_job_id}/export | sends neither `X-Job-Status` nor `X-Crawl-*`: `jobStatus` and `crawl` are null |
+| POST | fetchyr/login-sessions | new `fetchyr.startLoginSession`; body `{target_url, method?, cookies?, user_agent?, country?}`; 202 for `interactive`, 201 for `cookies` |
+| GET | fetchyr/sessions/{artifact_id} | new `fetchyr.getSession` |
+| POST | fetchyr/sessions/{artifact_id}/resume | new `fetchyr.resumeSession`; 409 when the session is not paused or the site signed it out |
+| POST | kolektr/extract, extract/html | reads `level`, `level_reason`, `login_options`; `hasMore` and `total` are removed (never sent) |
+| POST | nexus/analyze, synthesize, verify | the answers have no `error` field; it is removed from the three result types |
+| POST | nexus/reason | `timeout_secs` is sent when `timeoutSecs` is given, 0 included |
+
+Not covered, by choice: the batch routes other than the export, POST
+scraping/unified, the jobs, results and webhook routes, and the dashboard
+routes (billing, organisations, API keys).
+
+## Changed for 0.7.0 (unreleased), first part
+
+Checked against kobe-scraper e5e358aa. The route list fixture was edited by
+hand for these routes at the time: POST nexus/execute removed, the six
+crawl-extract routes and the batch export added.
 
 | Method | Path | After 0.6.0 |
 |---|---|---|
@@ -121,7 +150,7 @@ the six crawl-extract routes and the batch export added.
 | GET | webgrph/crawl-extract/{job_id} | `getCrawlExtract`, `waitForCrawlExtract` |
 | GET | webgrph/crawl-extract/{job_id}/results | `getCrawlExtractResults`, `iterCrawlExtractResults`, `crawlExtractAllResults`; `limit` (1–1000), `cursor`, `shape`, `page_type`, `kind`; follows `next_cursor` |
 | GET | webgrph/crawl-extract/{job_id}/pages | `getCrawlExtractPages`; `limit` (1–1000), `offset`, `status` |
-| GET | webgrph/crawl-extract/{job_id}/export | `exportCrawlExtract` (stream), `downloadCrawlExtract` (file); `format=json\|ndjson\|csv`, `shape`, `page_type`, `kind`; reads `X-Job-Status` and the `Content-Disposition` file name |
+| GET | webgrph/crawl-extract/{job_id}/export | `exportCrawlExtract` (stream), `downloadCrawlExtract` (file); `format=json\|ndjson\|csv`, `shape`, `page_type`, `kind`; reads `X-Job-Status`, the `X-Crawl-*` headers and the `Content-Disposition` file name |
 | POST | webgrph/crawl-extract/{job_id}/cancel | `cancelCrawlExtract`; 409 once the job has ended |
 | GET | batch-jobs/{batch_job_id}/export | `client.exportBatchJob`, `client.downloadBatchJob`; `format=json\|ndjson\|csv` |
 

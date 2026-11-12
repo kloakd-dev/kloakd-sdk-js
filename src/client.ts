@@ -210,7 +210,9 @@ export class Kloakd {
   /**
    * Crawl a site, fetch every page found and (with `extractSchema`) extract
    * each. A page that fails is recorded on its page; billing, auth and
-   * rate-limit errors stop the crawl and are thrown.
+   * rate-limit errors stop the crawl and are thrown. When the discovery
+   * crawl is held for quota the result has `held` true and no pages (see
+   * `webgrph.waitForCrawl`).
    */
   async crawl(url: string, opts: CrawlOrchestratorOptions = {}): Promise<SiteCrawlResult> {
     let result: SiteCrawlResult | undefined;
@@ -236,7 +238,10 @@ export class Kloakd {
     const crawlResult: CrawlResult = await this.webgrph.crawl(url, crawlOpts);
 
     const total = crawlResult.totalPages;
-    yield { type: 'discovery_complete', url, page: null, total, success: crawlResult.success, error: crawlResult.error, metadata: { pagesFound: total } };
+    yield {
+      type: 'discovery_complete', url, page: null, total, success: crawlResult.success, error: crawlResult.error,
+      metadata: { pagesFound: total, crawlId: crawlResult.crawlId, status: crawlResult.status, held: crawlResult.held, message: crawlResult.message },
+    };
 
     const fetchOpts: FetchOptions = opts.sessionArtifactId ? { sessionArtifactId: opts.sessionArtifactId } : {};
     const pages: CrawlPage[] = [];
@@ -293,6 +298,10 @@ export class Kloakd {
       pages,
       crawlArtifactId: crawlResult.artifactId,
       error: crawlResult.error,
+      crawlId: crawlResult.crawlId,
+      status: crawlResult.status,
+      message: crawlResult.message,
+      held: crawlResult.held,
     };
 
     yield { type: 'crawl_complete', url, page: null, total, success: result.success, error: result.error, metadata: { result } };

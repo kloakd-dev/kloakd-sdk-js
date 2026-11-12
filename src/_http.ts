@@ -167,6 +167,15 @@ export class HttpTransport {
     return { status: resp.status, body: (json ?? {}) as T };
   }
 
+  /**
+   * GET a route that answers plain text (not JSON) and return the text.
+   * Same headers, retries and errors as every other call.
+   */
+  async getText(path: string, params?: Record<string, string>): Promise<string> {
+    const resp = await this.fetchWithRetry('GET', this.url(path), undefined, params);
+    return typeof resp.text === 'function' ? resp.text() : '';
+  }
+
   /** Send a request and return its body as bytes (for binary answers such as a zip). */
   async requestBytes(method: string, path: string, body?: Record<string, unknown>): Promise<Uint8Array> {
     const resp = await this.fetchWithRetry(method, this.url(path), body);

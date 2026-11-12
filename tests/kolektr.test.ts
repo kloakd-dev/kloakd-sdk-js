@@ -28,7 +28,8 @@ describe('kolektr.page', () => {
     expect(result.records).toHaveLength(2);
     expect(result.artifactId).toBe('art-data-001');
     expect(result.ok).toBe(true);
-    expect(result.hasMore).toBe(false);
+    expect(result).not.toHaveProperty('hasMore');
+    expect(result).not.toHaveProperty('total');
   });
 
   it('passes fetchArtifactId for artifact chaining', async () => {

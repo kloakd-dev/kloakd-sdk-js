@@ -8,9 +8,12 @@
  * other routes kobe-scraper d7d25134 deleted are removed, and the hand-off
  * poll GET handoff/{job_id} is added; after 0.6.0 POST nexus/execute is removed
  * and the webgrph/crawl-extract routes and GET batch-jobs/{id}/export are
- * added, as kobe-scraper integration/2026-11-12 e5e358aa has them). Each public
- * method of each namespace is called with placeholder arguments against a
- * recording fetch.
+ * added). Since then the file is generated, not edited: it is every APIRoute
+ * of kobe_scraper.api.app at kobe-scraper main 6bd19e9b, with the module
+ * routers, the crawl-extract router and the /api/v1 playground and free-tier
+ * routers mounted as kernel/bootstrap.py does, `{x:path}` written `{x}`.
+ * Each public method of each namespace is called with placeholder
+ * arguments against a recording fetch.
  */
 import { readFileSync } from 'fs';
 import { join } from 'path';
@@ -176,8 +179,25 @@ describe('every route that can hand off is followed through a live poll route', 
     expect(isLive('GET', `${ORG_PREFIX}/evadr/vendors`)).toBe(true);
   });
 
-  it('the SDK does not call the dashboard-only webgrph analytics routes', async () => {
+  it('the webgrph analytics routes are gone from the API and the SDK calls none', async () => {
+    expect(routes.filter((r) => r.path.includes('/webgrph/analytics/'))).toEqual([]);
     const calls = await callEverything();
     expect(calls.filter((c) => c.path.includes('/webgrph/analytics/'))).toEqual([]);
+  });
+
+  it('crawl continue and the login-session routes are live and called', async () => {
+    const called = new Set((await callEverything()).map((c) => `${c.caller} ${c.method} ${c.path.slice(ORG_PREFIX.length + 1)}`));
+    const wanted = [
+      'webgrph.continueCrawl POST webgrph/crawl/id-1/continue',
+      'fetchyr.startLoginSession POST fetchyr/login-sessions',
+      'fetchyr.getSession GET fetchyr/sessions/id-1',
+      'fetchyr.resumeSession POST fetchyr/sessions/id-1/resume',
+      'skanyr.getExtractionText GET skanyr/extractions/id-1/text',
+    ];
+    expect(wanted.filter((w) => !called.has(w))).toEqual([]);
+    for (const w of wanted) {
+      const [, method, path] = w.split(' ') as [string, string, string];
+      expect(isLive(method, `${ORG_PREFIX}/${path}`)).toBe(true);
+    }
   });
 });

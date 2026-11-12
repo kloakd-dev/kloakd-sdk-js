@@ -2,8 +2,10 @@ import type { HttpTransport } from '../_http.js';
 import { query, seg } from '../_params.js';
 import { JobFailedError, JobTimeoutError } from '../errors.js';
 import type {
+  CrawlContinueResult,
   CrawlEvent,
   CrawlExtractCancelResult,
+  CrawlExtractCrawl,
   CrawlExtractJob,
   CrawlExtractLinks,
   CrawlExtractPage,
@@ -28,12 +30,11 @@ function parsePageNode(n: Record<string, unknown>): PageNode {
     url: String(n['url'] ?? ''),
     depth: Number(n['depth'] ?? 0),
     title: (metadata['title'] as string | undefined) ?? (n['title'] as string | undefined) ?? null,
-    statusCode: n['status_code'] != null ? Number(n['status_code']) : null,
     children: (n['children_urls'] as string[] | undefined) ?? (n['children'] as string[] | undefined) ?? [],
     parentUrl: (n['parent_url'] as string | undefined) ?? null,
     isGrouping: Boolean(metadata['is_grouping'] ?? n['is_grouping'] ?? false),
-    crawlParentUrl:
-      (metadata['crawl_parent_url'] as string | undefined) ?? (n['crawl_parent_url'] as string | undefined) ?? null,
+    fetchStatus: (metadata['fetch_status'] as string | undefined) ?? null,
+    fetchError: (metadata['fetch_error'] as string | undefined) ?? null,
   };
 }
 
@@ -65,6 +66,11 @@ function checkPagesOptions(opts: CrawlPagesOptions): void {
 }
 
 const FINISHED = new Set(['completed', 'failed', 'cancelled']);
+/**
+ * A crawl paused because the organisation's quota ran out
+ * (billing/held_work.py): not ended, and not moving until quota returns.
+ */
+const HELD = 'held_quota';
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 export interface CrawlOptions {
@@ -85,6 +91,16 @@ export interface CrawlOptions {
   pollIntervalMs?: number;
   /** How long to wait for the crawl before JobTimeoutError. Default 30 minutes. */
   timeoutMs?: number;
+}
+
+/** How `waitForCrawl` polls and what it loads. */
+export interface CrawlWaitOptions {
+  /** Default 3000 ms. */
+  pollIntervalMs?: number;
+  /** How long to wait for the crawl before JobTimeoutError. Default 30 minutes. */
+  timeoutMs?: number;
+  /** Also load the grouping folders (see `CrawlPagesOptions.includeGrouping`). */
+  includeGrouping?: boolean;
 }
 
 // ── Crawl-extract ───────────────────────────────────────────────────────────
@@ -150,6 +166,25 @@ function checkLimit(limit: number | undefined): void {
 }
 
 const str = (v: unknown): string | null => (v === undefined || v === null ? null : String(v));
+const num = (v: unknown): number | null => (v === undefined || v === null ? null : Number(v));
+const bool = (v: unknown): boolean | null => (v === undefined || v === null ? null : Boolean(v));
+
+function parseCrawlExtractCrawl(raw: unknown): CrawlExtractCrawl | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const c = raw as Record<string, unknown>;
+  return {
+    status: str(c['status']),
+    isPartial: bool(c['is_partial']),
+    partialReason: str(c['partial_reason']),
+    pagesDiscovered: num(c['pages_discovered']),
+    pagesFetched: num(c['pages_fetched']),
+    pagesUnfetched: num(c['pages_unfetched']),
+    cancelled: Boolean(c['cancelled']),
+    rootUnfetched: Boolean(c['root_unfetched']),
+    error: str(c['error']),
+    errorCode: str(c['error_code']),
+  };
+}
 
 function parseLinks(raw: unknown): CrawlExtractLinks | null {
   if (!raw || typeof raw !== 'object') return null;
@@ -196,9 +231,11 @@ function parseCrawlExtractStatus(raw: Record<string, unknown>, jobId: string): C
       pageTypes: (s['page_types'] as string[] | undefined) ?? [],
       fields: (s['fields'] as string[] | undefined) ?? [],
     })),
+    crawl: parseCrawlExtractCrawl(raw['crawl']),
   };
   return {
     ...status,
+    get held() { return status.crawl?.status === HELD && !FINISHED.has(status.status); },
     get finished() { return FINISHED.has(status.status); },
     get ok() { return status.status === 'completed'; },
   };
@@ -254,16 +291,44 @@ export class WebgrphNamespace {
   /**
    * Crawl a site: start it, wait until it finishes, and load every page of
    * its hierarchy. With `wait: false` the result carries only the crawl id.
+   * The outcomes are those of `waitForCrawl`: check `held` and `isPartial`
+   * as well as `ok`.
    */
   async crawl(url: string, opts: CrawlOptions = {}): Promise<CrawlResult> {
     const crawlId = await this.startCrawl(url, opts);
     if (opts.wait === false) {
       return crawlResult({ crawl_id: crawlId, status: 'queued' }, url, []);
     }
+    return this.waitFor(crawlId, url, opts);
+  }
+
+  /**
+   * Wait for a crawl by its id and load its pages. It returns when the crawl:
+   *
+   * - completed (`ok` true). A crawl that stopped before asking for every
+   *   page it found also completes: `isPartial` is then true, with
+   *   `partialReason`, and `resumable` says whether `continueCrawl` can
+   *   carry it on.
+   * - was cancelled (`status` `cancelled`; the pages it has are loaded).
+   * - is held (`held` true, `status` `held_quota`): the organisation's quota
+   *   ran out, so the API paused the crawl. It has not failed. `message`
+   *   says why; `pages` is empty. The crawl resumes by itself under the
+   *   same id when quota returns (an upgrade, a top-up or the next billing
+   *   period): call `waitForCrawl` again then. Held for 30 days, it ends as
+   *   failed with error code `held_quota_expired`.
+   *
+   * Throws JobFailedError when the crawl failed and JobTimeoutError when it
+   * is still running at `timeoutMs` (the crawl carries on).
+   */
+  async waitForCrawl(crawlId: string, opts: CrawlWaitOptions = {}): Promise<CrawlResult> {
+    return this.waitFor(crawlId, '', opts);
+  }
+
+  private async waitFor(crawlId: string, url: string, opts: CrawlWaitOptions): Promise<CrawlResult> {
     const interval = opts.pollIntervalMs ?? 3000;
     const deadline = Date.now() + (opts.timeoutMs ?? 30 * 60 * 1000);
     let status = await this.getCrawlStatus(crawlId);
-    while (!FINISHED.has(String(status['status'] ?? ''))) {
+    while (!FINISHED.has(String(status['status'] ?? '')) && status['status'] !== HELD) {
       if (Date.now() + interval > deadline) throw new JobTimeoutError(`Crawl ${crawlId} still running; check it with getCrawlStatus`, crawlId);
       await sleep(interval);
       status = await this.getCrawlStatus(crawlId);
@@ -271,14 +336,39 @@ export class WebgrphNamespace {
     if (status['status'] === 'failed') {
       throw new JobFailedError(String(status['error'] ?? 'Crawl failed'), crawlId);
     }
+    if (status['status'] === HELD) {
+      return crawlResult({ ...status, crawl_id: status['crawl_id'] ?? crawlId }, url, []);
+    }
     return crawlResult(
-      status,
+      { ...status, crawl_id: status['crawl_id'] ?? crawlId },
       url,
       await this.crawlAllPages(crawlId, opts.includeGrouping ? { includeGrouping: true } : {}),
     );
   }
 
-  /** Every page node of a finished crawl. */
+  /**
+   * Carry on a crawl that stopped at its time budget
+   * (`POST webgrph/crawl/{crawl_id}/continue`, answered 202): the crawl is
+   * queued again under the same id and asks for the pages it had found and
+   * not yet requested. Only for an ended crawl whose `resumable` is true;
+   * any other crawl is a 409 (ApiError). It counts against the quota as a
+   * crawl does (402, 409 or 429 when there is none). Wait for it with
+   * `waitForCrawl(crawlId)`.
+   */
+  async continueCrawl(crawlId: string): Promise<CrawlContinueResult> {
+    const raw = await this._t.post(`webgrph/crawl/${seg(crawlId)}/continue`, {});
+    return {
+      success: Boolean(raw['success']),
+      crawlId: String(raw['crawl_id'] ?? crawlId),
+      status: String(raw['status'] ?? ''),
+    };
+  }
+
+  /**
+   * Every page node of a crawl, started and waited for as `crawl` does. An
+   * empty list when the crawl is held for quota (see `waitForCrawl`): use
+   * `crawl` to tell that from a site with no pages.
+   */
   async crawlAll(url: string, opts: Omit<CrawlOptions, 'wait'> = {}): Promise<PageNode[]> {
     return (await this.crawl(url, opts)).pages;
   }
@@ -397,15 +487,19 @@ export class WebgrphNamespace {
 
   /**
    * Poll a crawl-extract job until it ends and return its last status
-   * (completed, failed or cancelled: check `ok`). Throws JobTimeoutError
-   * when it is still running at `timeoutMs`; the job carries on.
+   * (completed, failed or cancelled: check `ok`). It also returns, with
+   * `held` true and `finished` false, when the job's crawl is paused
+   * because the organisation's quota ran out: the job has not failed and
+   * carries on by itself when quota returns, so wait again then. Throws
+   * JobTimeoutError when it is still running at `timeoutMs`; the job
+   * carries on.
    */
   async waitForCrawlExtract(jobId: string, opts: CrawlExtractWaitOptions = {}): Promise<CrawlExtractStatus> {
     const interval = opts.pollIntervalMs ?? 3000;
     const deadline = Date.now() + (opts.timeoutMs ?? 60 * 60 * 1000);
     for (;;) {
       const status = await this.getCrawlExtract(jobId);
-      if (status.finished) return status;
+      if (status.finished || status.held) return status;
       if (Date.now() + interval > deadline) {
         throw new JobTimeoutError(`Crawl-extract job ${jobId} still running; check it with getCrawlExtract`, jobId);
       }
@@ -415,8 +509,9 @@ export class WebgrphNamespace {
 
   /**
    * Crawl a site and extract every page: start the job and wait until it
-   * ends. Throws JobFailedError when it failed (the rows it wrote can
-   * still be read and exported with the error's `jobId`).
+   * ends, or until its crawl is held for quota (`held` true: see
+   * `waitForCrawlExtract`). Throws JobFailedError when it failed (the rows
+   * it wrote can still be read and exported with the error's `jobId`).
    */
   async crawlExtract(url: string, opts: CrawlExtractOptions & CrawlExtractWaitOptions = {}): Promise<CrawlExtractStatus> {
     const job = await this.startCrawlExtract(url, opts);
@@ -480,7 +575,10 @@ export class WebgrphNamespace {
 
   /**
    * Download a job's rows as a stream (`format`: json, ndjson or csv). A job
-   * that has not completed exports the rows it has (`jobStatus`).
+   * that has not completed exports the rows it has (`jobStatus`). `crawl`
+   * says what the rows cover, from the `X-Crawl-*` headers: whether the
+   * crawl was partial, cancelled or never got its first page, and its
+   * page counts.
    */
   async exportCrawlExtract(jobId: string, opts: CrawlExtractExportOptions = {}): Promise<ExportDownload> {
     const format = checkExportFormat(opts.format);
@@ -570,6 +668,15 @@ function crawlResult(status: Record<string, unknown>, url: string, pages: PageNo
     pages,
     artifactId: (status['artifact_id'] as string | undefined) ?? null,
     error: (status['error'] as string | undefined) ?? null,
+    errorCode: str(status['error_code']),
+    message: str(status['message']),
+    held: status['status'] === HELD,
+    isPartial: bool(status['is_partial']),
+    partialReason: str(status['partial_reason']),
+    resumable: bool(status['resumable']),
+    pagesDiscovered: num(status['pages_discovered']),
+    pagesFetched: num(status['pages_fetched']),
+    pagesUnfetched: num(status['pages_unfetched']),
     hasMore: false,
     total: pages.length,
   };

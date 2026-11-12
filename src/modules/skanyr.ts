@@ -134,8 +134,13 @@ export class SkanyrNamespace {
     return this._t.post('skanyr/extract', { content_hash: contentHash, mime_type: mimeType, metadata });
   }
 
-  async getExtractionText(contentHash: string): Promise<Json> {
-    return this._t.get(`skanyr/extractions/${seg(contentHash)}/text`);
+  /**
+   * The text extracted from stored content. The API answers `text/plain`
+   * (modules/skanyr/router.py get_extraction_text), so this is the text
+   * itself; a content hash with no extraction is a 404 (ApiError).
+   */
+  async getExtractionText(contentHash: string): Promise<string> {
+    return this._t.getText(`skanyr/extractions/${seg(contentHash)}/text`);
   }
 
   async getExtractionStructure(contentHash: string): Promise<Json> {

@@ -5,10 +5,37 @@ Only 0.1.0 and 0.4.0 were published to npm before 0.5.0; 0.2.0 and 0.3.0 were ne
 
 ## [Unreleased]
 
-For the API on kobe-scraper integration/2026-11-12 (e5e358aa). **Breaking**:
-two methods are removed, so the next release is 0.7.0.
+For the API on kobe-scraper main (6bd19e9b). **Breaking**: two methods and
+several fields the API never sent are removed, so the next release is 0.7.0.
+
+### Fixed
+- `skanyr.getExtractionText` returns the extraction's text as a `string`.
+  The API answers `text/plain`; the method read it as JSON and always
+  returned `{}`. **Breaking** for code typed against the old
+  `Record<string, unknown>` return.
+- A crawl held for quota (status `held_quota`) no longer runs the wait to
+  its timeout. `webgrph.crawl`, `webgrph.waitForCrawl`, `webgrph.crawlAll`,
+  `client.crawl` and `client.crawlStream` return at once: `held` is true,
+  `status` is `held_quota`, `message` says what to do, `error` is null and
+  no pages are loaded. A held crawl is paused, not failed: it resumes under
+  the same id when quota returns, and ends `failed` with error code
+  `held_quota_expired` after 30 days. `waitForCrawlExtract` and
+  `crawlExtract` return the same way when the job's crawl is held
+  (`CrawlExtractStatus.held`).
+- `nexus.reason` sends `timeout_secs` when `timeoutSecs` is 0.
+- `ExportDownload.jobStatus` and `SavedExport.jobStatus` are documented as
+  null for a batch export: the batch export sends no `X-Job-Status`.
 
 ### Removed
+- `PageNode.statusCode` and `PageNode.crawlParentUrl`: the pages route never
+  sent them (they were always null). `parentUrl` is the page the crawl found
+  the node on; `fetchStatus` and `fetchError` say whether it was fetched.
+- `ExtractionResult.hasMore` and `ExtractionResult.total` (always false and
+  0), and `ExtractionResult` no longer extends `Paginated`. Use
+  `totalRecords`.
+- `error` on `NexusAnalyzeResult`, `NexusSynthesisResult` and
+  `NexusVerifyResult` (always null). A failed call throws; `ok` is true for
+  an analysis or synthesis that returned, and `verified` for a verification.
 - `nexus.execute` and `NexusExecuteResult`: the API removed
   `POST nexus/execute`; the call could only fail.
 - `nexus.knowledge` and `NexusKnowledgeResult`: the route now takes
@@ -16,6 +43,22 @@ two methods are removed, so the next release is 0.7.0.
   refused) and is not part of the public API reference.
 
 ### Added
+- `webgrph.waitForCrawl(crawlId, opts)`: wait for a crawl by id, for example
+  one that was held, continued, or started with `wait: false`.
+- `webgrph.continueCrawl(crawlId)`: fetch the rest of a crawl that stopped
+  at its time budget (`resumable` true). Answers `CrawlContinueResult`; a
+  crawl that cannot be continued is a 409 `ApiError`.
+- `CrawlResult.held`, `message`, `errorCode`, `isPartial`, `partialReason`,
+  `resumable`, `pagesDiscovered`, `pagesFetched`, `pagesUnfetched`.
+  `SiteCrawlResult.crawlId`, `status`, `message`, `held`.
+- `PageNode.fetchStatus` and `fetchError`.
+- `CrawlExtractStatus.crawl` (`CrawlExtractCrawl`): what the job's crawl
+  covered. `ExportDownload.crawl` and `SavedExport.crawl` (`ExportCrawl`):
+  the same from the export's `X-Crawl-*` headers; null when none is sent.
+- Login sessions (`fetchyr`): `startLoginSession(targetUrl, opts)`,
+  `getSession(artifactId)`, `resumeSession(artifactId)`. Types
+  `LoginSession`, `LoginSessionOptions`, `LoginCookie`, `SessionStatus`.
+- `ExtractionResult.level`, `levelReason`, `loginOptions`.
 - Crawl, extract and download in one job (`webgrph`): `startCrawlExtract`,
   `crawlExtract`, `getCrawlExtract`, `waitForCrawlExtract`,
   `getCrawlExtractResults`, `iterCrawlExtractResults`,

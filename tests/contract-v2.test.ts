@@ -1,6 +1,6 @@
 /**
- * The changes after 0.6.0 (unreleased), each checked against kobe-scraper integration/2026-11-12
- * (e5e358aa): the crawl-extract job (modules/webgrph/crawl_extract_router.py),
+ * The first changes after 0.6.0 (unreleased), each checked against
+ * kobe-scraper e5e358aa and again at main 6bd19e9b: the crawl-extract job (modules/webgrph/crawl_extract_router.py),
  * the batch export (kernel/batch_export_router.py) and the streamed downloads.
  */
 import { mkdtempSync, readFileSync, existsSync, rmSync } from 'fs';
@@ -275,6 +275,7 @@ describe('webgrph crawl-extract export and cancel', () => {
         contentType: 'text/csv; charset=utf-8',
         filename: `crawl-extract-${JOB}.ndjson`,
         jobStatus: 'completed',
+        crawl: null,
       });
     });
 
@@ -296,7 +297,8 @@ describe('webgrph crawl-extract export and cancel', () => {
       expect(urlOf(fetch).pathname).toBe(`${ORG_PREFIX}/batch-jobs/b-1/export`);
       expect(urlOf(fetch).search).toBe('?format=json');
       expect(JSON.parse(readFileSync(target, 'utf8'))).toHaveLength(1);
-      expect([saved.filename, saved.jobStatus]).toEqual(['batch-b-1.json', null]);
+      // The batch export sends neither X-Job-Status nor X-Crawl-* (kernel/batch_export_router.py).
+      expect([saved.filename, saved.jobStatus, saved.crawl]).toEqual(['batch-b-1.json', null, null]);
     });
   });
 

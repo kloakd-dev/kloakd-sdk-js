@@ -41,9 +41,8 @@ export class NexusNamespace {
       pageType: (raw['page_type'] as string | undefined) ?? 'unknown',
       confidence: Number(raw['confidence'] ?? 0),
       artifactId: artifactIdOf(raw),
-      error: (raw['error'] as string | undefined) ?? null,
     };
-    return { ...result, get ok() { return result.error === null; } };
+    return { ...result, get ok() { return true; } };
   }
 
   /** Generate an extraction program for a page and a goal. */
@@ -59,9 +58,8 @@ export class NexusNamespace {
       steps: (raw['steps'] as Record<string, unknown>[] | undefined) ?? [],
       confidence: Number(raw['confidence'] ?? 0),
       synthesisTimeMs: Number(raw['synthesis_time_ms'] ?? 0),
-      error: (raw['error'] as string | undefined) ?? null,
     };
-    return { ...result, get ok() { return result.error === null; } };
+    return { ...result, get ok() { return true; } };
   }
 
   /**
@@ -84,9 +82,8 @@ export class NexusNamespace {
       })),
       verificationResultId: (raw['verification_result_id'] as string | undefined) ?? null,
       durationMs: Number(raw['duration_ms'] ?? 0),
-      error: (raw['error'] as string | undefined) ?? null,
     };
-    return { ...result, get ok() { return result.verified && result.error === null; } };
+    return { ...result, get ok() { return result.verified; } };
   }
 
   /**
@@ -97,7 +94,7 @@ export class NexusNamespace {
   async reason(queryType: string, parameters: string[] = [], opts: { perceptionId?: string; timeoutSecs?: number } = {}): Promise<Record<string, unknown>> {
     const body: Record<string, unknown> = { query_type: queryType, parameters };
     if (opts.perceptionId) body['perception_id'] = opts.perceptionId;
-    if (opts.timeoutSecs) body['timeout_secs'] = opts.timeoutSecs;
+    if (opts.timeoutSecs !== undefined) body['timeout_secs'] = opts.timeoutSecs;
     return this._t.post('nexus/reason', body);
   }
 }
