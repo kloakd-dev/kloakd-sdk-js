@@ -1,5 +1,5 @@
 /**
- * The changes for 0.7.0 (unreleased), each checked against kobe-scraper main
+ * The changes for 0.7.0, each checked against kobe-scraper main
  * 6bd19e9b: held and partial crawls and crawl continue
  * (modules/webgrph/router.py, billing/held_work.py), the crawl of a
  * crawl-extract job and the export's X-Crawl-* headers

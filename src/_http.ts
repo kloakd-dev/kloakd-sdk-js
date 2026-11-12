@@ -17,7 +17,7 @@
 
 import { BillingUnavailableError, KloakdError, RateLimitError, raiseForStatus } from './errors.js';
 
-export const SDK_VERSION = '0.6.0';
+export const SDK_VERSION = '0.7.0';
 export const USER_AGENT = `kloakd-sdk-js/${SDK_VERSION}`;
 const IDEMPOTENT = new Set(['GET', 'HEAD', 'DELETE']);
 const MAX_WAIT_MS = 60_000;

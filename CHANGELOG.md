@@ -3,11 +3,11 @@
 All notable changes to the KLOAKD TypeScript/JavaScript SDK are documented here.
 Only 0.1.0 and 0.4.0 were published to npm before 0.5.0; 0.2.0 and 0.3.0 were never released there.
 
-## [Unreleased]
+## [0.7.0] — 2026-11-12
 
 For the API on kobe-scraper main (6bd19e9b); the batch and unified scrape
 methods and the route list are of integration/2026-11-12b (228857dc). **Breaking**: two methods and
-several fields the API never sent are removed, so the next release is 0.7.0.
+several fields the API never sent are removed, so this release is 0.7.0.
 
 ### Fixed
 - `skanyr.getExtractionText` returns the extraction's text as a `string`.
@@ -92,6 +92,7 @@ several fields the API never sent are removed, so the next release is 0.7.0.
 - The route list the tests check against (`tests/fixtures/routes.tsv`) is
   that of kobe-scraper integration/2026-11-12b (228857dc): 280 routes. The
   API removed its 12 `performance/...` routes; the SDK called none.
+- `User-Agent: kloakd-sdk-js/0.7.0`.
 
 ## [0.6.0] — 2026-11-03
 

@@ -1,5 +1,5 @@
 /**
- * Batch jobs and the unified scrape (0.7.0, unreleased), each checked
+ * Batch jobs and the unified scrape (0.7.0), each checked
  * against kobe-scraper integration/2026-11-12b (228857dc):
  * kernel/jobs_runs_router.py (create_batch_job, get_batch_job,
  * list_batch_jobs, get_batch_job_results, pause_batch_job,

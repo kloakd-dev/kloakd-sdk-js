@@ -1,5 +1,5 @@
 /**
- * The first changes after 0.6.0 (unreleased), each checked against
+ * The first changes for 0.7.0, each checked against
  * kobe-scraper e5e358aa and again at main 6bd19e9b: the crawl-extract job (modules/webgrph/crawl_extract_router.py),
  * the batch export (kernel/batch_export_router.py) and the streamed downloads.
  */

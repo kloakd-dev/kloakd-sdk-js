@@ -1,4 +1,4 @@
-# Routes the SDK calls (unreleased; after 0.6.0)
+# Routes the SDK calls (0.7.0)
 
 Checked against the API's route list (`tests/fixtures/routes.tsv`, generated
 from kobe-scraper integration/2026-11-12b at 228857dc with the module routers
@@ -108,7 +108,7 @@ route list.
 `tests/contract.test.ts` checks that each of the nine methods follows a 202
 through a live poll route.
 
-## Changed for 0.7.0 (unreleased), second part
+## Changed for 0.7.0, second part
 
 Checked against kobe-scraper main 6bd19e9b. The route list fixture is now
 generated again, not edited: every route of the API app (292 rows then), with
@@ -135,7 +135,7 @@ Not covered, by choice: the jobs, results and webhook routes, and the
 dashboard routes (billing, organisations, API keys). The batch routes and
 the unified scrape are covered in the third part, below.
 
-## Changed for 0.7.0 (unreleased), third part
+## Changed for 0.7.0, third part
 
 Checked against kobe-scraper integration/2026-11-12b (228857dc):
 `kernel/jobs_runs_router.py`, `application/jobs/batch_control.py` and
@@ -158,13 +158,13 @@ the API; the SDK called none of them.
 Not covered, by choice: `DELETE batch/{batch_job_id}`, `POST
 batch/url-import` and the event stream `GET batch-jobs/{batch_job_id}/stream`.
 
-## Changed for 0.7.0 (unreleased), first part
+## Changed for 0.7.0, first part
 
 Checked against kobe-scraper e5e358aa. The route list fixture was edited by
 hand for these routes at the time: POST nexus/execute removed, the six
 crawl-extract routes and the batch export added.
 
-| Method | Path | After 0.6.0 |
+| Method | Path | 0.7.0 |
 |---|---|---|
 | POST | nexus/execute | the API removed the route; `nexus.execute` and `NexusExecuteResult` are removed |
 | POST | nexus/knowledge | the body is now `{strategy_id, url, outcome}` and the route is not in the public API reference; `nexus.knowledge` and `NexusKnowledgeResult` are removed |
