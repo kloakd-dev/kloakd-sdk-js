@@ -323,8 +323,8 @@ describe('the batch and unified scrape routes are in the API route list', () => 
     expect(wanted.filter((w) => !live.has(w))).toEqual([]);
   });
 
-  it('the list is the integration branch\'s: 280 routes, the performance routes gone', () => {
-    expect(live.size).toBe(280);
+  it('the list is the integration branch\'s 280 routes plus the three crawl-estimate contract routes, the performance routes gone', () => {
+    expect(live.size).toBe(283);
     expect([...live].filter((r) => r.includes(`${P}/performance/`))).toEqual([]);
   });
 });

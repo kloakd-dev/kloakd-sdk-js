@@ -2,9 +2,12 @@ import type { HttpTransport } from '../_http.js';
 import { query, seg } from '../_params.js';
 import { JobFailedError, JobTimeoutError } from '../errors.js';
 import type {
+  CrawlContinueOptions,
   CrawlContinueResult,
+  CrawlEstimate,
   CrawlEvent,
   CrawlExtractCancelResult,
+  CrawlExtractContinueResult,
   CrawlExtractCrawl,
   CrawlExtractJob,
   CrawlExtractLinks,
@@ -123,6 +126,19 @@ export interface CrawlExtractOptions {
   extract?: CrawlExtractSpec;
 }
 
+/** Options for `estimateCrawl`: the values the crawl would be started with. */
+export interface CrawlEstimateOptions {
+  /** Unset: the tier's maximum; a given value is clamped to it. */
+  maxDepth?: number;
+  /** Unset: the tier's maximum; a given value is clamped to it. */
+  maxPages?: number;
+}
+
+/** Options for `estimateCrawlExtract`. */
+export interface CrawlExtractEstimateOptions extends CrawlEstimateOptions {
+  extract?: CrawlExtractSpec;
+}
+
 /** How `waitForCrawlExtract` / `crawlExtract` poll. */
 export interface CrawlExtractWaitOptions {
   /** Default 3000 ms. */
@@ -232,6 +248,9 @@ function parseCrawlExtractStatus(raw: Record<string, unknown>, jobId: string): C
       fields: (s['fields'] as string[] | undefined) ?? [],
     })),
     crawl: parseCrawlExtractCrawl(raw['crawl']),
+    timeBudgetS: num(raw['time_budget_s']),
+    elapsedS: num(raw['elapsed_s']),
+    estRemainingS: num(raw['est_remaining_s']),
   };
   return {
     ...status,
@@ -266,6 +285,57 @@ function parseCrawlExtractPage(p: Record<string, unknown>): CrawlExtractPage {
   };
 }
 
+function extractBody(spec: CrawlExtractSpec): Record<string, unknown> {
+  const extract: Record<string, unknown> = {};
+  if (spec.entityType) extract['entity_type'] = spec.entityType;
+  if (spec.fields) extract['fields'] = spec.fields;
+  if (spec.schema) {
+    const schema: Record<string, unknown> = { fields: spec.schema.fields };
+    if (spec.schema.itemSelector) schema['item_selector'] = spec.schema.itemSelector;
+    extract['schema'] = schema;
+  }
+  return extract;
+}
+
+/** The continue body: only the values given; undefined when none is, so no body is sent. */
+function continueBody(opts: CrawlContinueOptions): Record<string, unknown> | undefined {
+  const body: Record<string, unknown> = {};
+  if (opts.maxPages !== undefined) body['max_pages'] = opts.maxPages;
+  if (opts.maxDepth !== undefined) body['max_depth'] = opts.maxDepth;
+  return Object.keys(body).length > 0 ? body : undefined;
+}
+
+function parseCrawlEstimate(raw: Record<string, unknown>, url: string): CrawlEstimate {
+  const obj = (v: unknown): Record<string, unknown> => (v && typeof v === 'object' ? (v as Record<string, unknown>) : {});
+  const limits = obj(raw['plan_limits']);
+  const site = obj(raw['site']);
+  const pages = obj(raw['est_pages']);
+  const duration = obj(raw['est_duration_s']);
+  return {
+    mode: String(raw['mode'] ?? ''),
+    url: String(raw['url'] ?? url),
+    maxDepth: Number(raw['max_depth'] ?? 0),
+    maxPages: Number(raw['max_pages'] ?? 0),
+    planLimits: { maxDepth: num(limits['max_depth']), maxPages: num(limits['max_pages']), planTier: str(limits['plan_tier']) },
+    clamped: Boolean(raw['clamped']),
+    site: {
+      reachable: Boolean(site['reachable']),
+      sitemapPages: num(site['sitemap_pages']),
+      homepageLinks: num(site['homepage_links']),
+      probeError: str(site['probe_error']),
+    },
+    estPages: { low: Number(pages['low'] ?? 0), high: Number(pages['high'] ?? 0), source: String(pages['source'] ?? '') },
+    willHitPageCap: Boolean(raw['will_hit_page_cap']),
+    timeBudgetS: Number(raw['time_budget_s'] ?? 0),
+    estDurationS: { low: Number(duration['low'] ?? 0), high: Number(duration['high'] ?? 0) },
+    estGb: Number(raw['est_gb'] ?? 0),
+    gbRemaining: num(raw['gb_remaining']),
+    willExhaustQuota: Boolean(raw['will_exhaust_quota']),
+    warning: str(raw['warning']),
+    explanation: String(raw['explanation'] ?? ''),
+  };
+}
+
 function filterParams(opts: CrawlExtractFilters): Record<string, string | undefined> {
   return { shape: opts.shape, page_type: opts.pageType, kind: opts.kind };
 }
@@ -286,6 +356,21 @@ export class WebgrphNamespace {
     if (opts.budget) body['budget'] = opts.budget;
     const raw = await this._t.post('webgrph/crawl', body);
     return String(raw['crawl_id'] ?? '');
+  }
+
+  /**
+   * Estimate a crawl before starting it (`POST webgrph/crawl/estimate`):
+   * the depth and page cap after clamping to the plan, the pages the site
+   * seems to have, the pages the crawl would fetch, a duration range, the
+   * data use against what the plan has left, any warning, and what a crawl
+   * does. Not metered: no charge and no work slot. Start the crawl with the
+   * same options (`startCrawl` / `crawl`) when the estimate suits.
+   */
+  async estimateCrawl(url: string, opts: CrawlEstimateOptions = {}): Promise<CrawlEstimate> {
+    const body: Record<string, unknown> = { url };
+    if (opts.maxDepth !== undefined) body['max_depth'] = opts.maxDepth;
+    if (opts.maxPages !== undefined) body['max_pages'] = opts.maxPages;
+    return parseCrawlEstimate(await this._t.post('webgrph/crawl/estimate', body), url);
   }
 
   /**
@@ -354,9 +439,15 @@ export class WebgrphNamespace {
    * any other crawl is a 409 (ApiError). It counts against the quota as a
    * crawl does (402, 409 or 429 when there is none). Wait for it with
    * `waitForCrawl(crawlId)`.
+   *
+   * With `maxPages` / `maxDepth` the crawl continues with those limits
+   * (clamped to the plan; they may only be raised, a lower value is a 422
+   * `continue_cannot_lower`). A crawl that stopped at `max_pages` can be
+   * continued with a larger `maxPages`. Without options no body is sent and
+   * the call is as before.
    */
-  async continueCrawl(crawlId: string): Promise<CrawlContinueResult> {
-    const raw = await this._t.post(`webgrph/crawl/${seg(crawlId)}/continue`, {});
+  async continueCrawl(crawlId: string, opts: CrawlContinueOptions = {}): Promise<CrawlContinueResult> {
+    const raw = await this._t.request('POST', `webgrph/crawl/${seg(crawlId)}/continue`, continueBody(opts));
     return {
       success: Boolean(raw['success']),
       crawlId: String(raw['crawl_id'] ?? crawlId),
@@ -454,17 +545,7 @@ export class WebgrphNamespace {
     if (opts.captureMode) body['capture_mode'] = opts.captureMode;
     if (opts.scope) body['scope'] = opts.scope;
     if (opts.budget) body['budget'] = opts.budget;
-    if (opts.extract) {
-      const extract: Record<string, unknown> = {};
-      if (opts.extract.entityType) extract['entity_type'] = opts.extract.entityType;
-      if (opts.extract.fields) extract['fields'] = opts.extract.fields;
-      if (opts.extract.schema) {
-        const schema: Record<string, unknown> = { fields: opts.extract.schema.fields };
-        if (opts.extract.schema.itemSelector) schema['item_selector'] = opts.extract.schema.itemSelector;
-        extract['schema'] = schema;
-      }
-      body['extract'] = extract;
-    }
+    if (opts.extract) body['extract'] = extractBody(opts.extract);
     const raw = await this._t.post('webgrph/crawl-extract', body);
     const limits = (raw['limits'] as Record<string, unknown> | undefined) ?? {};
     return {
@@ -477,6 +558,37 @@ export class WebgrphNamespace {
         maxDepth: limits['max_depth'] != null ? Number(limits['max_depth']) : null,
       },
       links: parseLinks(raw['links']),
+    };
+  }
+
+  /**
+   * Estimate a crawl-extract job before starting it
+   * (`POST webgrph/crawl-extract/estimate`): as `estimateCrawl`, with the
+   * extraction time per page in the duration. Needs the Kolektr module as
+   * the job route does. Not metered.
+   */
+  async estimateCrawlExtract(url: string, opts: CrawlExtractEstimateOptions = {}): Promise<CrawlEstimate> {
+    const body: Record<string, unknown> = { url };
+    if (opts.maxDepth !== undefined) body['max_depth'] = opts.maxDepth;
+    if (opts.maxPages !== undefined) body['max_pages'] = opts.maxPages;
+    if (opts.extract) body['extract'] = extractBody(opts.extract);
+    return parseCrawlEstimate(await this._t.post('webgrph/crawl-extract/estimate', body), url);
+  }
+
+  /**
+   * Carry on a crawl-extract job whose crawl stopped early
+   * (`POST webgrph/crawl-extract/{job_id}/continue`): the job's crawl
+   * continues and the new pages are extracted. Options and errors are as
+   * `continueCrawl`; without options no body is sent. Wait for the job with
+   * `waitForCrawlExtract(jobId)`.
+   */
+  async continueCrawlExtract(jobId: string, opts: CrawlContinueOptions = {}): Promise<CrawlExtractContinueResult> {
+    const raw = await this._t.request('POST', `webgrph/crawl-extract/${seg(jobId)}/continue`, continueBody(opts));
+    return {
+      success: Boolean(raw['success']),
+      jobId: String(raw['job_id'] ?? jobId),
+      crawlId: String(raw['crawl_id'] ?? ''),
+      status: String(raw['status'] ?? ''),
     };
   }
 
@@ -677,6 +789,9 @@ function crawlResult(status: Record<string, unknown>, url: string, pages: PageNo
     pagesDiscovered: num(status['pages_discovered']),
     pagesFetched: num(status['pages_fetched']),
     pagesUnfetched: num(status['pages_unfetched']),
+    timeBudgetS: num(status['time_budget_s']),
+    elapsedS: num(status['elapsed_s']),
+    estRemainingS: num(status['est_remaining_s']),
     hasMore: false,
     total: pages.length,
   };

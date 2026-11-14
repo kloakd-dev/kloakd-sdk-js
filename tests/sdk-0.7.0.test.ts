@@ -162,10 +162,10 @@ describe('partial crawls and continueCrawl', () => {
     expect(nodes.map((n) => [n.fetchStatus, n.fetchError])).toEqual([['unfetched', 'HTTP 403'], ['not_requested', null], [null, null]]);
   });
 
-  it('continueCrawl posts to the continue route with no fields and reads the 202', async () => {
+  it('continueCrawl posts to the continue route with no body and reads the 202', async () => {
     const f = mockFetch({ success: true, crawl_id: 'c 1', status: 'queued' }, 202);
     const r = await makeClient(f).webgrph.continueCrawl('c 1');
-    expect([methodOf(f), pathOf(f), bodyOf(f)]).toEqual(['POST', 'webgrph/crawl/c%201/continue', {}]);
+    expect([methodOf(f), pathOf(f), calls(f)[0]![1].body]).toEqual(['POST', 'webgrph/crawl/c%201/continue', undefined]);
     expect(r).toEqual({ success: true, crawlId: 'c 1', status: 'queued' });
   });
 

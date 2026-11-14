@@ -14,6 +14,12 @@
  * routers mounted as kernel/bootstrap.py does, `{x:path}` written `{x}`.
  * It is now that list at kobe-scraper integration/2026-11-12b (228857dc):
  * 280 rows, without the 12 performance/... routes the API removed.
+ * Three rows are added by hand from the crawl-estimate API contract
+ * (CRAWL-ESTIMATE-CONTRACT.md, 14 Nov 2026), whose backend is built on
+ * feature/2026-11-14-crawl-estimate: POST webgrph/crawl/estimate,
+ * POST webgrph/crawl-extract/estimate and
+ * POST webgrph/crawl-extract/{job_id}/continue. Regenerate the file once
+ * that branch is merged.
  * Each public method of each namespace is called with placeholder
  * arguments against a recording fetch.
  */

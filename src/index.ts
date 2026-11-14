@@ -35,6 +35,8 @@ export type { HandoffOptions } from './_handoff.js';
 export { CRAWL_PAGES_DEFAULT_LIMIT, CRAWL_PAGES_MAX_LIMIT } from './modules/webgrph.js';
 export { CRAWL_EXTRACT_MAX_LIMIT } from './modules/webgrph.js';
 export type {
+  CrawlEstimateOptions,
+  CrawlExtractEstimateOptions,
   CrawlExtractExportOptions,
   CrawlExtractFilters,
   CrawlExtractOptions,
@@ -54,9 +56,15 @@ export type {
   BatchJobsPage,
   ChatEvent,
   ChatTurn,
+  CrawlContinueOptions,
   CrawlContinueResult,
+  CrawlEstimate,
+  CrawlEstimatePlanLimits,
+  CrawlEstimateRange,
+  CrawlEstimateSite,
   CrawlEvent,
   CrawlExtractCancelResult,
+  CrawlExtractContinueResult,
   CrawlExtractCrawl,
   CrawlExtractJob,
   CrawlExtractLinks,

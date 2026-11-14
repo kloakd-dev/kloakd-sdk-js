@@ -2,10 +2,25 @@
 
 Checked against the API's route list (`tests/fixtures/routes.tsv`, generated
 from kobe-scraper integration/2026-11-12b at 228857dc with the module routers
-mounted as `kernel/bootstrap.py` does; 280 rows). `tests/contract.test.ts` calls every public
+mounted as `kernel/bootstrap.py` does; 280 rows), plus the three
+crawl-estimate routes below, added by hand from the API contract until the
+list is regenerated (283 rows). `tests/contract.test.ts` calls every public
 method and fails on any request that is not a live route.
 
 All paths are under `/api/v1/organizations/{organization_id}/`.
+
+## Unreleased: crawl estimate and continue with options
+
+From the crawl-estimate API contract of 14 Nov 2026 (backend branch
+feature/2026-11-14-crawl-estimate, not yet merged).
+
+| Method | Path | Unreleased |
+|---|---|---|
+| POST | webgrph/crawl/estimate | new `webgrph.estimateCrawl`; body `{url, max_depth?, max_pages?}`; not metered; returns `CrawlEstimate` |
+| POST | webgrph/crawl-extract/estimate | new `webgrph.estimateCrawlExtract`; body `{url, max_depth?, max_pages?, extract?}`; needs Kolektr |
+| POST | webgrph/crawl/{id}/continue | `continueCrawl(id, {maxPages?, maxDepth?})`; body `{max_pages?, max_depth?}` only when an option is given, otherwise no body (0.7.0 sent `{}`); 422 `continue_cannot_lower` |
+| POST | webgrph/crawl-extract/{job_id}/continue | new `webgrph.continueCrawlExtract`; same body |
+| GET | webgrph/crawl/{id}, webgrph/crawl-extract/{job_id} | also read `time_budget_s`, `elapsed_s`, `est_remaining_s` (null until reported) |
 
 ## What 0.2.0 called
 

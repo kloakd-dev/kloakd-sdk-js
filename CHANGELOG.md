@@ -3,6 +3,31 @@
 All notable changes to the KLOAKD TypeScript/JavaScript SDK are documented here.
 Only 0.1.0 and 0.4.0 were published to npm before 0.5.0; 0.2.0 and 0.3.0 were never released there.
 
+## [Unreleased]
+
+For the crawl-estimate API (kobe-scraper feature/2026-11-14-crawl-estimate,
+not yet merged).
+
+### Added
+- `webgrph.estimateCrawl(url, { maxDepth?, maxPages? })` and
+  `webgrph.estimateCrawlExtract(url, { maxDepth?, maxPages?, extract? })`
+  (`POST webgrph/crawl/estimate`, `webgrph/crawl-extract/estimate`) return a
+  `CrawlEstimate`: the depth and page cap after clamping to the plan, what
+  the site probe found, the estimated pages and duration, the time budget,
+  the data use against what remains, any warning and an explanation. Not
+  metered.
+- `webgrph.continueCrawl(crawlId, { maxPages?, maxDepth? })`: continue a
+  crawl with raised limits (a lower value is a 422 `continue_cannot_lower`).
+- `webgrph.continueCrawlExtract(jobId, { maxPages?, maxDepth? })`
+  (`POST webgrph/crawl-extract/{job_id}/continue`), returning
+  `CrawlExtractContinueResult`.
+- `timeBudgetS`, `elapsedS` and `estRemainingS` on `CrawlResult` and
+  `CrawlExtractStatus` (null until the crawl reports them).
+
+### Changed
+- `continueCrawl(crawlId)` without options sends no body (it sent `{}`).
+  The API treats both the same.
+
 ## [0.7.0] — 2026-11-12
 
 For the API on kobe-scraper main (6bd19e9b); the batch and unified scrape
