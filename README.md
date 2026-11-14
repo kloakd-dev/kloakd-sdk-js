@@ -70,6 +70,33 @@ A fetch handed off by `evadr.fetch` is resumed with `client.evadr.waitForJob(job
 
 ## Crawling
 
+A crawl maps the site's pages and links; crawl-extract also returns the items on each page as rows.
+
+### Estimate, then start
+
+Before starting, ask the API what the crawl would do. The estimate is not
+metered. It gives the depth and page cap after clamping to your plan, the
+pages the site seems to have (`site`, with `estPages.source`), the pages the
+crawl would fetch, a duration range, the data use against what your plan has
+left, and any warning. Start with the same options when it suits you; change
+`maxDepth` / `maxPages` and estimate again when it does not.
+
+```typescript
+const est = await client.webgrph.estimateCrawl('https://example.com', { maxDepth: 2, maxPages: 100 });
+console.log(est.maxDepth, est.maxPages, est.estPages, est.estDurationS, est.estGb, est.gbRemaining);
+if (est.warning) console.log(est.warning);
+if (!est.willExhaustQuota) {
+  const crawl = await client.webgrph.crawl('https://example.com', { maxDepth: est.maxDepth, maxPages: est.maxPages });
+}
+
+// The same for crawl-extract (needs Kolektr):
+const ex = await client.webgrph.estimateCrawlExtract('https://shop.example/', { maxPages: 50, extract: { entityType: 'product' } });
+```
+
+`timeBudgetS` is the time budget the crawl will use. A running crawl's
+status (`CrawlResult`, `CrawlExtractStatus`) carries `timeBudgetS`,
+`elapsedS` and `estRemainingS` once the crawl has reported them.
+
 ```typescript
 // Discover a site's pages (waits for the crawl to finish).
 const crawl = await client.webgrph.crawl('https://example.com', { maxPages: 50 });
@@ -130,6 +157,12 @@ if (crawl.held) {
 - **Continue**: `continueCrawl` works only when `resumable` is true. Any
   other crawl (not resumable, still running, already continuing, unknown) is
   a 409 `ApiError`.
+- **Continue with more**: `continueCrawl(crawlId, { maxPages, maxDepth })`
+  raises the limits (clamped to your plan); a crawl that stopped at
+  `max_pages` can be continued with a larger `maxPages`. A lower value is a
+  422 (`continue_cannot_lower`). Estimate first with `estimateCrawl`.
+  `continueCrawlExtract(jobId, { maxPages, maxDepth })` does the same for a
+  crawl-extract job and extracts the new pages.
 
 Each `PageNode` has `fetchStatus` (`fetched`, `unfetched` or `not_requested`)
 and `fetchError`.

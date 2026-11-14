@@ -143,6 +143,12 @@ export interface CrawlResult extends Paginated {
   pagesFetched: number | null;
   /** Pages the crawl asked for and could not fetch. Null until reported. */
   pagesUnfetched: number | null;
+  /** The crawl's time budget in seconds (`time_budget_s`). Null until the crawl reports it. */
+  timeBudgetS: number | null;
+  /** Seconds the crawl has run (`elapsed_s`). Null until the crawl reports it. */
+  elapsedS: number | null;
+  /** Seconds left of the time budget (`est_remaining_s`). Null until the crawl reports it. */
+  estRemainingS: number | null;
   readonly ok: boolean;
 }
 
@@ -152,6 +158,82 @@ export interface CrawlContinueResult {
   crawlId: string;
   /** `queued`. */
   status: string;
+}
+
+/**
+ * `webgrph.continueCrawl` / `webgrph.continueCrawlExtract` options. Each
+ * value is clamped to the plan and may only be raised: a lower value is a
+ * 422 (`continue_cannot_lower`). Unset values keep the job's own.
+ */
+export interface CrawlContinueOptions {
+  maxPages?: number;
+  maxDepth?: number;
+}
+
+/** `webgrph.continueCrawlExtract`: the job's crawl is queued again and the new pages are extracted. */
+export interface CrawlExtractContinueResult {
+  success: boolean;
+  jobId: string;
+  crawlId: string;
+  /** `queued`. */
+  status: string;
+}
+
+/** A crawl or crawl-extract estimate's limits for the plan. */
+export interface CrawlEstimatePlanLimits {
+  maxDepth: number | null;
+  maxPages: number | null;
+  planTier: string | null;
+}
+
+/** What the estimate's probe of the site found. */
+export interface CrawlEstimateSite {
+  reachable: boolean;
+  /** Pages in the sitemap; null when no sitemap was found. */
+  sitemapPages: number | null;
+  /** Same-host links on the start page; null when it was not fetched. */
+  homepageLinks: number | null;
+  probeError: string | null;
+}
+
+/** A low–high range. */
+export interface CrawlEstimateRange {
+  low: number;
+  high: number;
+}
+
+/**
+ * `webgrph.estimateCrawl` / `webgrph.estimateCrawlExtract`: what a crawl
+ * or crawl-extract with these options would do, before it starts. The
+ * estimate is not metered.
+ */
+export interface CrawlEstimate {
+  /** `crawl` or `crawl_extract`. */
+  mode: string;
+  url: string;
+  /** After clamping to the plan. */
+  maxDepth: number;
+  /** After clamping to the plan. */
+  maxPages: number;
+  planLimits: CrawlEstimatePlanLimits;
+  /** True when a requested value was lowered to the plan's limit. */
+  clamped: boolean;
+  site: CrawlEstimateSite;
+  /** Pages the crawl would fetch; `source` is `sitemap`, `homepage_links` or `limit` (only the cap is known). */
+  estPages: CrawlEstimateRange & { source: string };
+  /** True when the site seems larger than `maxPages`. */
+  willHitPageCap: boolean;
+  /** The time budget the crawl will use, in seconds. */
+  timeBudgetS: number;
+  estDurationS: CrawlEstimateRange;
+  estGb: number;
+  /** Null when unknown. */
+  gbRemaining: number | null;
+  willExhaustQuota: boolean;
+  /** A plain sentence when there is something to warn about, else null. */
+  warning: string | null;
+  /** What a crawl (or crawl & extract) does, in a sentence or two. */
+  explanation: string;
 }
 
 /**
@@ -283,6 +365,12 @@ export interface CrawlExtractStatus {
    * crawl fetched, not of the whole site.
    */
   crawl: CrawlExtractCrawl | null;
+  /** The job's crawl time budget in seconds (`time_budget_s`). Null until the crawl reports it. */
+  timeBudgetS: number | null;
+  /** Seconds the job's crawl has run (`elapsed_s`). Null until the crawl reports it. */
+  elapsedS: number | null;
+  /** Seconds left of the crawl's time budget (`est_remaining_s`). Null until the crawl reports it. */
+  estRemainingS: number | null;
   /**
    * True when the job's crawl is paused because the organisation's quota
    * ran out (`crawl.status` is `held_quota`). The job has not failed and is
