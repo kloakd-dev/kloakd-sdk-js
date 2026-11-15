@@ -102,7 +102,16 @@ status (`CrawlResult`, `CrawlExtractStatus`) carries `timeBudgetS`,
 A page's extras (`images`, `media` for video and audio, `fonts`,
 `stylesheets` and `tracking`) are **not loaded by default**; the page's
 content (the document, its scripts and its data) always is. Ask for an extra
-per job with `includeResources`. The estimate shows what the job would use
+per job with `includeResources`. With `captureMode: 'visual'`, images and
+stylesheets are included automatically. The same option, off by default,
+is on `evadr.fetch` and `kolektr.page` / `kolektr.pageAll`:
+
+```typescript
+await client.evadr.fetch('https://example.com', { includeResources: ['images'] });
+await client.kolektr.page('https://example.com', { schema: { title: 'h1' }, includeResources: ['stylesheets'] });
+```
+
+The estimate shows what the job would use
 with your choice (`data.totalMb`), what loading every extra would use
 (`data.totalMbAllResources`) and what each extra left out saves
 (`data.savingByCategoryMb`).

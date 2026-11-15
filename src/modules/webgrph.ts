@@ -90,7 +90,9 @@ export interface CrawlCostOptions {
   /**
    * Page extras to load (`include_resources`): any of `images`, `media`,
    * `fonts`, `stylesheets`, `tracking`. Unset or empty: none is loaded
-   * (the default); content (documents, scripts, data) always is.
+   * (the default); content (documents, scripts, data) always is. With
+   * `captureMode` `visual`, images and stylesheets are included
+   * automatically.
    */
   includeResources?: string[];
   /** Stop the job when it has used this much data, in MB (`max_data_mb`). It then ends partial with `partialReason` `data_limit`. */

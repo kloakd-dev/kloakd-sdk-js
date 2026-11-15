@@ -26,6 +26,13 @@ export interface FetchOptions extends HandoffOptions {
   forceBrowser?: boolean;
   useProxy?: boolean;
   sessionArtifactId?: string;
+  /**
+   * Page extras to load (`include_resources`): any of `images`, `media`,
+   * `fonts`, `stylesheets`, `tracking`. Page extras are off by default on
+   * every browser route: leaving this out loads none (the page's content
+   * always loads). Sent only when given.
+   */
+  includeResources?: string[];
 }
 
 export interface FetchAsyncOptions {
@@ -42,12 +49,16 @@ export class EvadrNamespace {
    * Fetch a page. The API answers within about 85 s; a fetch still running
    * then is handed off as a job (202), which this follows to its result
    * (polling the 202's `poll_url`; see HandoffOptions).
+   *
+   * Page extras (images, video and audio, fonts, stylesheets, tracking) are
+   * off by default; ask for them with `includeResources`.
    */
   async fetch(url: string, opts: FetchOptions = {}): Promise<FetchResult> {
     const body: Record<string, unknown> = { url };
     if (opts.forceBrowser) body['force_browser'] = true;
     if (opts.useProxy) body['use_proxy'] = true;
     if (opts.sessionArtifactId) body['session_artifact_id'] = opts.sessionArtifactId;
+    if (opts.includeResources !== undefined) body['include_resources'] = opts.includeResources;
     return parseFetch(await postFollowingHandoff(this._t, 'evadr/fetch', body, opts), url);
   }
 

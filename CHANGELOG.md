@@ -54,6 +54,11 @@ feature/2026-11-15-cost-control, not yet merged).
   size, content type, final URL, status code, verified, content URL) and `client.downloadArtifact(id)` (`GET
   artifacts/{artifact_id}/content`, returning the HTML as a `Uint8Array`).
 - `CostAcknowledgementRequiredError` for 409 `cost_acknowledgement_required`.
+- `evadr.fetch` and `kolektr.page` / `kolektr.pageAll` take
+  `includeResources` (`include_resources`, sent only when given). Page
+  extras are off by default on every browser route; leaving it out loads
+  none. With `captureMode` `visual`, a crawl or crawl-extract includes
+  images and stylesheets automatically.
 
 ## [0.7.0] — 2026-11-12
 

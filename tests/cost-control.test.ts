@@ -394,3 +394,41 @@ describe('artifacts', () => {
     expect([err2 instanceof ApiError, err2.statusCode]).toEqual([true, 422]);
   });
 });
+
+describe('page extras on evadr.fetch and the kolektr extract calls', () => {
+  const FETCHED = { success: true, url: 'https://example.com/', status_code: 200, tier_used: 1, html: '<html/>' };
+  const EXTRACTED = { success: true, url: 'https://example.com/', records: [], total_records: 0 };
+
+  it('evadr.fetch sends include_resources when given', async () => {
+    const f = mockFetch(FETCHED);
+    await makeClient(f).evadr.fetch('https://example.com/', { includeResources: ['images', 'fonts'] });
+    expect([methodOf(f), pathOf(f), bodyOf(f)]).toEqual(['POST', 'evadr/fetch', { url: 'https://example.com/', include_resources: ['images', 'fonts'] }]);
+  });
+
+  it('evadr.fetch without it sends what it sent before', async () => {
+    const f = mockFetch(FETCHED);
+    await makeClient(f).evadr.fetch('https://example.com/', { forceBrowser: true });
+    expect(bodyOf(f)).toEqual({ url: 'https://example.com/', force_browser: true });
+  });
+
+  it('kolektr.page sends include_resources when given', async () => {
+    const f = mockFetch(EXTRACTED);
+    await makeClient(f).kolektr.page('https://example.com/', { includeResources: ['stylesheets'] });
+    expect([methodOf(f), pathOf(f), bodyOf(f)]).toEqual(['POST', 'kolektr/extract', { url: 'https://example.com/', include_resources: ['stylesheets'] }]);
+  });
+
+  it('kolektr.page without it sends what it sent before', async () => {
+    const f = mockFetch(EXTRACTED);
+    await makeClient(f).kolektr.page('https://example.com/', { level: 'basic' });
+    expect(bodyOf(f)).toEqual({ url: 'https://example.com/', level: 'basic' });
+  });
+
+  it('kolektr.pageAll passes it on, and an empty list is sent as given', async () => {
+    const f = mockFetchSequence([{ body: EXTRACTED }, { body: EXTRACTED }]);
+    const c = makeClient(f);
+    await c.kolektr.pageAll('https://example.com/', { includeResources: ['media', 'tracking'] });
+    await c.kolektr.pageAll('https://example.com/', { includeResources: [] });
+    expect(bodyOf(f, 0)).toEqual({ url: 'https://example.com/', include_resources: ['media', 'tracking'] });
+    expect(bodyOf(f, 1)).toEqual({ url: 'https://example.com/', include_resources: [] });
+  });
+});
