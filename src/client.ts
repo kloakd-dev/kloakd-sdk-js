@@ -44,6 +44,7 @@ import { SkanyrNamespace } from './modules/skanyr.js';
 import { WebgrphNamespace } from './modules/webgrph.js';
 import type { CrawlOptions } from './modules/webgrph.js';
 import type {
+  Artifact,
   BatchJob,
   BatchJobItem,
   BatchJobResults,
@@ -292,6 +293,34 @@ export class Kloakd {
   async downloadBatchJob(batchJobId: string, filePath: string, opts: { format?: ExportFormat } = {}): Promise<SavedExport> {
     const format = checkExportFormat(opts.format);
     return saveExport(this._transport, `batch-jobs/${seg(batchJobId)}/export`, { format }, filePath);
+  }
+
+  /**
+   * A stored page's metadata (`GET artifacts/{artifact_id}`): id, type, url,
+   * createdAt, sizeBytes and contentType. Only the fetched pages of your
+   * organisation are served; any other artifact (sessions and cookies
+   * included) is a 404 ApiError.
+   */
+  async getArtifact(artifactId: string): Promise<Artifact> {
+    const raw = await this._transport.get(`artifacts/${seg(artifactId)}`);
+    const text = (v: unknown): string | null => (v === undefined || v === null ? null : String(v));
+    return {
+      id: String(raw['id'] ?? artifactId),
+      type: String(raw['type'] ?? ''),
+      url: text(raw['url']),
+      createdAt: text(raw['created_at']),
+      sizeBytes: raw['size_bytes'] === undefined || raw['size_bytes'] === null ? null : Number(raw['size_bytes']),
+      contentType: text(raw['content_type']),
+    };
+  }
+
+  /**
+   * A stored page's HTML as bytes (`GET artifacts/{artifact_id}/content`,
+   * sent as an attachment). Decode it with `new TextDecoder().decode(bytes)`.
+   * Treat it as untrusted HTML: do not render it outside a sandbox.
+   */
+  async downloadArtifact(artifactId: string): Promise<Uint8Array> {
+    return this._transport.requestBytes('GET', `artifacts/${seg(artifactId)}/content`);
   }
 
   /**

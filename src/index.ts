@@ -15,6 +15,7 @@ export {
   AuthenticationError,
   BillingUnavailableError,
   ConcurrencyLimitError,
+  CostAcknowledgementRequiredError,
   ForbiddenError,
   JobFailedError,
   JobTimeoutError,
@@ -35,6 +36,7 @@ export type { HandoffOptions } from './_handoff.js';
 export { CRAWL_PAGES_DEFAULT_LIMIT, CRAWL_PAGES_MAX_LIMIT } from './modules/webgrph.js';
 export { CRAWL_EXTRACT_MAX_LIMIT } from './modules/webgrph.js';
 export type {
+  CrawlCostOptions,
   CrawlEstimateOptions,
   CrawlExtractEstimateOptions,
   CrawlExtractExportOptions,
@@ -46,10 +48,12 @@ export type {
   CrawlOptions,
   CrawlPagesOptions,
   CrawlWaitOptions,
+  MapSiteOptions,
 } from './modules/webgrph.js';
 
 export type {
   AnalyzeResult,
+  Artifact,
   BatchJob,
   BatchJobItem,
   BatchJobResults,
@@ -59,6 +63,8 @@ export type {
   CrawlContinueOptions,
   CrawlContinueResult,
   CrawlEstimate,
+  CrawlEstimateData,
+  CrawlEstimateDataRange,
   CrawlEstimatePlanLimits,
   CrawlEstimateRange,
   CrawlEstimateSite,
@@ -87,6 +93,7 @@ export type {
   FetchEvent,
   FetchResult,
   FormDetectionResult,
+  IncludeResource,
   LoginCookie,
   LoginSession,
   MfaChallenge,
@@ -102,6 +109,8 @@ export type {
   SessionResult,
   SessionStatus,
   SiteCrawlResult,
+  SiteMap,
+  SiteMapBranch,
   UnifiedEscalation,
   UnifiedScrapeProgress,
   UnifiedScrapeResult,

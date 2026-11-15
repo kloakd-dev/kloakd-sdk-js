@@ -5,6 +5,8 @@ import type {
   CrawlContinueOptions,
   CrawlContinueResult,
   CrawlEstimate,
+  CrawlEstimateData,
+  CrawlEstimateDataRange,
   CrawlEvent,
   CrawlExtractCancelResult,
   CrawlExtractContinueResult,
@@ -22,6 +24,8 @@ import type {
   ExportFormat,
   PageNode,
   SavedExport,
+  SiteMap,
+  SiteMapBranch,
 } from '../models.js';
 import { checkExportFormat, openExport, saveExport } from '../_download.js';
 
@@ -76,7 +80,45 @@ const FINISHED = new Set(['completed', 'failed', 'cancelled']);
 const HELD = 'held_quota';
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
-export interface CrawlOptions {
+/**
+ * The cost-control options shared by `startCrawl` / `crawl` and
+ * `startCrawlExtract` / `crawlExtract` (the cost-control contract of
+ * 15 Nov 2026). Each is sent only when set; a job without them runs as
+ * before (no per-job data limit, no extras).
+ */
+export interface CrawlCostOptions {
+  /**
+   * Page extras to load (`include_resources`): any of `images`, `media`,
+   * `fonts`, `stylesheets`, `tracking`. Unset or empty: none is loaded
+   * (the default); content (documents, scripts, data) always is.
+   */
+  includeResources?: string[];
+  /** Stop the job when it has used this much data, in MB (`max_data_mb`). It then ends partial with `partialReason` `data_limit`. */
+  maxDataMb?: number;
+  /** `estimateId` from `estimateCrawl` / `estimateCrawlExtract` (`estimate_id`). */
+  estimateId?: string;
+  /**
+   * The user has accepted the estimate (`cost_acknowledged`; sent only when
+   * true). A dashboard session must send it, with `estimateId`, when the
+   * estimate's `consentRequired` is true; API keys are not refused.
+   */
+  costAcknowledged?: boolean;
+  /** Fetch exactly these pages (same registrable domain as `url`, up to `maxPages`); links are not followed. The first is the root. */
+  urls?: string[];
+  /** Follow only links under these path prefixes (for example `/products/`); the root is always fetched. */
+  includePaths?: string[];
+}
+
+function costBody(body: Record<string, unknown>, opts: CrawlCostOptions): void {
+  if (opts.includeResources !== undefined) body['include_resources'] = opts.includeResources;
+  if (opts.maxDataMb !== undefined) body['max_data_mb'] = opts.maxDataMb;
+  if (opts.estimateId !== undefined) body['estimate_id'] = opts.estimateId;
+  if (opts.costAcknowledged) body['cost_acknowledged'] = true;
+  if (opts.urls !== undefined) body['urls'] = opts.urls;
+  if (opts.includePaths !== undefined) body['include_paths'] = opts.includePaths;
+}
+
+export interface CrawlOptions extends CrawlCostOptions {
   /** Unset: the API's default for the organisation's tier. */
   maxDepth?: number;
   /** Unset: the API's default for the organisation's tier. */
@@ -112,7 +154,7 @@ export interface CrawlWaitOptions {
 export const CRAWL_EXTRACT_MAX_LIMIT = 1000;
 
 /** Options for `startCrawlExtract` / `crawlExtract` (crawl_extract_router.py CrawlExtractRequest). */
-export interface CrawlExtractOptions {
+export interface CrawlExtractOptions extends CrawlCostOptions {
   /** Unset: the tier's maximum; a given value is clamped to it. */
   maxDepth?: number;
   /** Unset: the tier's maximum; a given value is clamped to it. */
@@ -132,6 +174,14 @@ export interface CrawlEstimateOptions {
   maxDepth?: number;
   /** Unset: the tier's maximum; a given value is clamped to it. */
   maxPages?: number;
+  /** The extras the job would load (see `CrawlCostOptions.includeResources`); the estimate shows what each would cost. */
+  includeResources?: string[];
+}
+
+/** Options for `mapSite`. */
+export interface MapSiteOptions {
+  /** The most URLs to list (`max_urls`); unset: the API's default. */
+  maxUrls?: number;
 }
 
 /** Options for `estimateCrawlExtract`. */
@@ -251,6 +301,9 @@ function parseCrawlExtractStatus(raw: Record<string, unknown>, jobId: string): C
     timeBudgetS: num(raw['time_budget_s']),
     elapsedS: num(raw['elapsed_s']),
     estRemainingS: num(raw['est_remaining_s']),
+    dataUsedMb: num(raw['data_used_mb']),
+    maxDataMb: num(raw['max_data_mb']),
+    includeResources: strings(raw['include_resources']),
   };
   return {
     ...status,
@@ -302,6 +355,7 @@ function continueBody(opts: CrawlContinueOptions): Record<string, unknown> | und
   const body: Record<string, unknown> = {};
   if (opts.maxPages !== undefined) body['max_pages'] = opts.maxPages;
   if (opts.maxDepth !== undefined) body['max_depth'] = opts.maxDepth;
+  if (opts.maxDataMb !== undefined) body['max_data_mb'] = opts.maxDataMb;
   return Object.keys(body).length > 0 ? body : undefined;
 }
 
@@ -333,6 +387,63 @@ function parseCrawlEstimate(raw: Record<string, unknown>, url: string): CrawlEst
     willExhaustQuota: Boolean(raw['will_exhaust_quota']),
     warning: str(raw['warning']),
     explanation: String(raw['explanation'] ?? ''),
+    includeResources: strings(raw['include_resources']) ?? [],
+    data: parseEstimateData(raw['data']),
+    shareOfRemaining: dataRange(raw['share_of_remaining']),
+    consentRequired: Boolean(raw['consent_required']),
+    risks: strings(raw['risks']) ?? [],
+    suggestedMaxDataMb: num(raw['suggested_max_data_mb']),
+    estimateId: str(raw['estimate_id']),
+  };
+}
+
+const strings = (v: unknown): string[] | null => (Array.isArray(v) ? v.map(String) : null);
+
+function numbers(v: unknown): Record<string, number> {
+  if (!v || typeof v !== 'object') return {};
+  return Object.fromEntries(Object.entries(v as Record<string, unknown>).map(([k, n]) => [k, Number(n ?? 0)]));
+}
+
+function dataRange(v: unknown): CrawlEstimateDataRange | null {
+  if (!v || typeof v !== 'object') return null;
+  const r = v as Record<string, unknown>;
+  return { low: num(r['low']), typical: Number(r['typical'] ?? 0), high: Number(r['high'] ?? 0) };
+}
+
+const zeroRange = (): CrawlEstimateDataRange => ({ low: null, typical: 0, high: 0 });
+
+function parseEstimateData(v: unknown): CrawlEstimateData | null {
+  if (!v || typeof v !== 'object') return null;
+  const d = v as Record<string, unknown>;
+  return {
+    source: String(d['source'] ?? ''),
+    perPageMb: dataRange(d['per_page_mb']) ?? zeroRange(),
+    totalMb: dataRange(d['total_mb']) ?? zeroRange(),
+    totalMbAllResources: dataRange(d['total_mb_all_resources']) ?? zeroRange(),
+    savingMb: dataRange(d['saving_mb']) ?? zeroRange(),
+    byCategoryMbPerPage: numbers(d['by_category_mb_per_page']),
+    savingByCategoryMb: numbers(d['saving_by_category_mb']),
+  };
+}
+
+function parseBranch(v: unknown): SiteMapBranch {
+  const b = (v && typeof v === 'object' ? v : {}) as Record<string, unknown>;
+  return {
+    path: String(b['path'] ?? ''),
+    urlCount: Number(b['url_count'] ?? 0),
+    sampleUrls: strings(b['sample_urls']) ?? [],
+    children: Array.isArray(b['children']) ? b['children'].map(parseBranch) : [],
+  };
+}
+
+function parseSiteMap(raw: Record<string, unknown>, url: string): SiteMap {
+  return {
+    url: String(raw['url'] ?? url),
+    source: String(raw['source'] ?? ''),
+    totalUrls: Number(raw['total_urls'] ?? 0),
+    truncated: Boolean(raw['truncated']),
+    dataUsedMb: Number(raw['data_used_mb'] ?? 0),
+    branches: Array.isArray(raw['branches']) ? raw['branches'].map(parseBranch) : [],
   };
 }
 
@@ -354,6 +465,7 @@ export class WebgrphNamespace {
     if (opts.captureMode) body['capture_mode'] = opts.captureMode;
     if (opts.scope) body['scope'] = opts.scope;
     if (opts.budget) body['budget'] = opts.budget;
+    costBody(body, opts);
     const raw = await this._t.post('webgrph/crawl', body);
     return String(raw['crawl_id'] ?? '');
   }
@@ -370,7 +482,23 @@ export class WebgrphNamespace {
     const body: Record<string, unknown> = { url };
     if (opts.maxDepth !== undefined) body['max_depth'] = opts.maxDepth;
     if (opts.maxPages !== undefined) body['max_pages'] = opts.maxPages;
+    if (opts.includeResources !== undefined) body['include_resources'] = opts.includeResources;
     return parseCrawlEstimate(await this._t.post('webgrph/crawl/estimate', body), url);
+  }
+
+  /**
+   * Map a site before choosing what to crawl (`POST webgrph/map`): the URLs
+   * its robots.txt, sitemaps and start page list, as a tree by path (up to
+   * 3 levels, each sorted by `urlCount` and capped at 50 with the rest as
+   * `other`). Only those files and the start page are fetched; it is
+   * metered like a crawl and needs the same entitlement. Then start a crawl
+   * or crawl-extract with `includePaths` (chosen branches) or `urls`
+   * (chosen pages).
+   */
+  async mapSite(url: string, opts: MapSiteOptions = {}): Promise<SiteMap> {
+    const body: Record<string, unknown> = { url };
+    if (opts.maxUrls !== undefined) body['max_urls'] = opts.maxUrls;
+    return parseSiteMap(await this._t.post('webgrph/map', body), url);
   }
 
   /**
@@ -443,8 +571,10 @@ export class WebgrphNamespace {
    * With `maxPages` / `maxDepth` the crawl continues with those limits
    * (clamped to the plan; they may only be raised, a lower value is a 422
    * `continue_cannot_lower`). A crawl that stopped at `max_pages` can be
-   * continued with a larger `maxPages`. Without options no body is sent and
-   * the call is as before.
+   * continued with a larger `maxPages`. A crawl that stopped at its data
+   * limit (`partialReason` `data_limit`) continues with a higher
+   * `maxDataMb`. Without options no body is sent and the call is as before.
+   * The crawl keeps its `urls`, `includePaths` and extras.
    */
   async continueCrawl(crawlId: string, opts: CrawlContinueOptions = {}): Promise<CrawlContinueResult> {
     const raw = await this._t.request('POST', `webgrph/crawl/${seg(crawlId)}/continue`, continueBody(opts));
@@ -546,6 +676,7 @@ export class WebgrphNamespace {
     if (opts.scope) body['scope'] = opts.scope;
     if (opts.budget) body['budget'] = opts.budget;
     if (opts.extract) body['extract'] = extractBody(opts.extract);
+    costBody(body, opts);
     const raw = await this._t.post('webgrph/crawl-extract', body);
     const limits = (raw['limits'] as Record<string, unknown> | undefined) ?? {};
     return {
@@ -571,6 +702,7 @@ export class WebgrphNamespace {
     const body: Record<string, unknown> = { url };
     if (opts.maxDepth !== undefined) body['max_depth'] = opts.maxDepth;
     if (opts.maxPages !== undefined) body['max_pages'] = opts.maxPages;
+    if (opts.includeResources !== undefined) body['include_resources'] = opts.includeResources;
     if (opts.extract) body['extract'] = extractBody(opts.extract);
     return parseCrawlEstimate(await this._t.post('webgrph/crawl-extract/estimate', body), url);
   }
@@ -792,6 +924,9 @@ function crawlResult(status: Record<string, unknown>, url: string, pages: PageNo
     timeBudgetS: num(status['time_budget_s']),
     elapsedS: num(status['elapsed_s']),
     estRemainingS: num(status['est_remaining_s']),
+    dataUsedMb: num(status['data_used_mb']),
+    maxDataMb: num(status['max_data_mb']),
+    includeResources: strings(status['include_resources']),
     hasMore: false,
     total: pages.length,
   };

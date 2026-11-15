@@ -144,6 +144,21 @@ export class ConcurrencyLimitError extends KloakdError {
   }
 }
 
+/**
+ * 409 `cost_acknowledgement_required`: the job's estimate needs the user's
+ * consent and the request did not carry it. Start the job again with the
+ * estimate's `estimateId` and `costAcknowledged: true`
+ * (`webgrph.estimateCrawl` / `estimateCrawlExtract`, then `crawl` /
+ * `crawlExtract`). The API refuses only dashboard sessions this way; API
+ * keys are not refused.
+ */
+export class CostAcknowledgementRequiredError extends KloakdError {
+  constructor(message: string) {
+    super(message, 409, 'cost_acknowledgement_required');
+    this.name = 'CostAcknowledgementRequiredError';
+  }
+}
+
 /** 402: a paid plan whose last payment failed (`payment_required`). */
 export class PaymentRequiredError extends KloakdError {
   readonly upgradeUrl: string;
@@ -301,6 +316,9 @@ export function raiseForStatus(
       activeRequests: num(detailObj['active_requests']),
       tier: str('tier') ?? '',
     });
+  }
+  if (statusCode === 409 && code === 'cost_acknowledgement_required') {
+    throw new CostAcknowledgementRequiredError(detail);
   }
   if (statusCode === 429) {
     if (code === 'gb_exhausted') {

@@ -97,6 +97,74 @@ const ex = await client.webgrph.estimateCrawlExtract('https://shop.example/', { 
 status (`CrawlResult`, `CrawlExtractStatus`) carries `timeBudgetS`,
 `elapsedS` and `estRemainingS` once the crawl has reported them.
 
+### Extras, data limit and consent
+
+A page's extras (`images`, `media` for video and audio, `fonts`,
+`stylesheets` and `tracking`) are **not loaded by default**; the page's
+content (the document, its scripts and its data) always is. Ask for an extra
+per job with `includeResources`. The estimate shows what the job would use
+with your choice (`data.totalMb`), what loading every extra would use
+(`data.totalMbAllResources`) and what each extra left out saves
+(`data.savingByCategoryMb`).
+
+```typescript
+const est = await client.webgrph.estimateCrawl('https://example.com', { maxPages: 100, includeResources: ['images'] });
+console.log(est.data?.source, est.data?.totalMb, est.data?.savingByCategoryMb);
+console.log(est.shareOfRemaining, est.risks, est.suggestedMaxDataMb);
+
+const crawl = await client.webgrph.crawl('https://example.com', {
+  maxPages: 100,
+  includeResources: ['images'],
+  maxDataMb: est.suggestedMaxDataMb ?? undefined, // stop at this much data
+  estimateId: est.estimateId ?? undefined,
+  costAcknowledged: est.consentRequired,          // the user accepted the estimate
+});
+```
+
+- `data.source` says where the page weight came from: `site_profile`
+  (pages of the site measured before), `root_page` (the start page) or
+  `typical`. Ranges have `typical` and `high` (`totalMb` also `low`).
+- `shareOfRemaining` is the share of your remaining allowance the job may
+  use (0.04 is 4%); `consentRequired` is true when the high end reaches the
+  consent threshold (10% by default) or the job may use up the allowance.
+- **Consent**: a job started from a dashboard session whose estimate needs
+  consent is refused with `CostAcknowledgementRequiredError` (409
+  `cost_acknowledgement_required`) unless it carries the `estimateId` (valid
+  30 minutes) and `costAcknowledged: true`. Requests made with an API key are
+  not refused, so that scripts keep working; send both anyway to have the
+  acknowledgement kept on the job's record.
+- **Data limit**: `maxDataMb` stops the job once it has used that much data.
+  No new page is started, the pages in flight finish, and the job ends
+  partial with `partialReason` `data_limit` ("Stopped at your data limit of
+  N MB. Continue with a higher limit to fetch more."). Without `maxDataMb`
+  there is no per-job limit. Continue with a higher one:
+  `continueCrawl(crawlId, { maxDataMb: 200 })` (or `continueCrawlExtract`).
+- The status (`CrawlResult`, `CrawlExtractStatus`) carries `dataUsedMb`,
+  `maxDataMb` and `includeResources`.
+
+### Map first, then choose
+
+`webgrph.mapSite(url, { maxUrls })` lists the URLs a site's robots.txt,
+sitemaps and start page give, as a tree by path, without fetching the
+pages themselves (metered like a crawl, with the same entitlement). Crawl
+the branches you want with `includePaths`, or exact pages with `urls`:
+
+```typescript
+const map = await client.webgrph.mapSite('https://shop.example/', { maxUrls: 5000 });
+console.log(map.source, map.totalUrls, map.truncated, map.dataUsedMb);
+for (const b of map.branches) console.log(b.path, b.urlCount, b.children.length);
+
+await client.webgrph.startCrawlExtract('https://shop.example/', { includePaths: ['/products/'] });
+// Try one page first:
+await client.webgrph.startCrawlExtract('https://shop.example/', { urls: ['https://shop.example/'] });
+```
+
+The branches are at most 3 levels deep, each level sorted by `urlCount` and
+capped at 50 (the rest grouped as `other`). `urls` must be on the same
+registrable domain as `url` and are capped at `maxPages`; links are not
+followed. `includePaths` keeps the crawl to links under those prefixes (the
+root is always fetched). Both are kept when the job is continued.
+
 ```typescript
 // Discover a site's pages (waits for the crawl to finish).
 const crawl = await client.webgrph.crawl('https://example.com', { maxPages: 50 });
@@ -237,6 +305,20 @@ per-request timeout.
 `client.downloadBatchJob(batchJobId, path, { format })` do the same for a
 batch job's results. The batch export does not say the job's state:
 `jobStatus` and `crawl` are null there.
+
+## A fetched page from History
+
+`client.getArtifact(artifactId)` returns a stored page's metadata (`id`,
+`type`, `url`, `createdAt`, `sizeBytes`, `contentType`), and
+`client.downloadArtifact(artifactId)` its HTML as a `Uint8Array`. Only your
+organisation's fetched pages are served; any other artifact (login
+sessions and cookies included) is a 404. Treat the HTML as untrusted: do
+not render it outside a sandbox.
+
+```typescript
+const meta = await client.getArtifact(artifactId);
+const html = new TextDecoder().decode(await client.downloadArtifact(artifactId));
+```
 
 ## Batch jobs
 
@@ -418,6 +500,7 @@ Every error extends `KloakdError` (`statusCode`, `message`, `code`: the API's er
 | `NotEntitledError` | 403 `not_entitled` (`module`) or `tier_access_denied` (`feature`, `currentTier`, `requiredTier`); `upgradeUrl`. |
 | `ForbiddenError` | Any other 403. `NotEntitledError` extends it. |
 | `ConcurrencyLimitError` | 409 `concurrent_limit`: every work slot is in use (`tier`, `concurrentLimit`, `activeCrawls`, `activeRequests`). Not retried. |
+| `CostAcknowledgementRequiredError` | 409 `cost_acknowledgement_required`: the estimate needs consent; start again with `estimateId` and `costAcknowledged: true`. Dashboard sessions only; API keys are not refused. |
 | `RateLimitError` | 429 `rate_limited` (`retryAfter`, `resetAt`). `quotaExhausted` is true for the playground quota (`quotaUsed`, `quotaLimit`, `upgradeUrl`). |
 | `QuotaExceededError` | 429 `gb_exhausted`: the plan's GB are used up (`tier`, `upgradeUrl`). |
 | `BillingUnavailableError` | 503 `billing_unavailable`: usage could not be checked; nothing was started. |

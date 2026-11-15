@@ -20,6 +20,11 @@
  * POST webgrph/crawl-extract/estimate and
  * POST webgrph/crawl-extract/{job_id}/continue. Regenerate the file once
  * that branch is merged.
+ * Three more are added by hand from the cost-control contract
+ * (COST-CONTROL-CONTRACT.md, 15 Nov 2026), whose backend is built on
+ * feature/2026-11-15-cost-control: POST webgrph/map,
+ * GET artifacts/{artifact_id} and GET artifacts/{artifact_id}/content
+ * (286 rows).
  * Each public method of each namespace is called with placeholder
  * arguments against a recording fetch.
  */
@@ -109,6 +114,25 @@ describe('the SDK calls only live routes', () => {
     const calls = await callEverything();
     expect(calls.every((c) => c.path.startsWith(ORG_PREFIX))).toBe(true);
     expect(TEST_BASE_URL).toBe('https://api.kloakd.dev');
+  });
+});
+
+describe('the client-level artifact calls are live routes', () => {
+  it('getArtifact and downloadArtifact', async () => {
+    const fetch = jest.fn(async () => ({
+      status: 200,
+      ok: true,
+      headers: { get: (h: string) => (h === 'content-type' ? 'application/json' : null) },
+      json: async () => ({ id: 'a-1' }),
+      arrayBuffer: async () => new ArrayBuffer(0),
+      body: undefined,
+    }));
+    const client = makeClient(fetch);
+    await client.getArtifact('a-1');
+    await client.downloadArtifact('a-1');
+    const seen = fetch.mock.calls.map((c) => `${((c[1] ?? {}) as { method?: string }).method ?? 'GET'} ${new URL(String(c[0])).pathname}`);
+    expect(seen).toEqual([`GET ${ORG_PREFIX}/artifacts/a-1`, `GET ${ORG_PREFIX}/artifacts/a-1/content`]);
+    expect(fetch.mock.calls.every((c) => isLive(((c[1] ?? {}) as { method?: string }).method ?? 'GET', new URL(String(c[0])).pathname))).toBe(true);
   });
 });
 

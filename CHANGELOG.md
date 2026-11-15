@@ -28,6 +28,32 @@ not yet merged).
 - `continueCrawl(crawlId)` without options sends no body (it sent `{}`).
   The API treats both the same.
 
+### Added: cost control
+
+For the cost-control contract of 15 November 2026 (kobe-scraper
+feature/2026-11-15-cost-control, not yet merged).
+
+- `CrawlOptions` and `CrawlExtractOptions` take `includeResources`,
+  `maxDataMb`, `estimateId`, `costAcknowledged` (sent only when true),
+  `urls` and `includePaths` (`CrawlCostOptions`). Each is sent only when
+  set, so earlier calls send the same body as before. Page extras are off
+  by default on the API.
+- `continueCrawl` and `continueCrawlExtract` take `maxDataMb` to raise the
+  data limit of a job that stopped at it (`partialReason` `data_limit`).
+- `estimateCrawl` and `estimateCrawlExtract` take `includeResources`, and
+  `CrawlEstimate` gains `includeResources`, `data` (`CrawlEstimateData`:
+  source, per-page and total MB ranges, with and without the extras, savings
+  and MB by category), `shareOfRemaining`, `consentRequired`, `risks`,
+  `suggestedMaxDataMb` and `estimateId`.
+- `dataUsedMb`, `maxDataMb` and `includeResources` on `CrawlResult` and
+  `CrawlExtractStatus` (null when the API did not send them).
+- `webgrph.mapSite(url, { maxUrls? })` (`POST webgrph/map`) returns a
+  `SiteMap` with its `SiteMapBranch` tree.
+- `client.getArtifact(id)` (`GET artifacts/{artifact_id}`, returning
+  `Artifact`) and `client.downloadArtifact(id)` (`GET
+  artifacts/{artifact_id}/content`, returning the HTML as a `Uint8Array`).
+- `CostAcknowledgementRequiredError` for 409 `cost_acknowledgement_required`.
+
 ## [0.7.0] — 2026-11-12
 
 For the API on kobe-scraper main (6bd19e9b); the batch and unified scrape

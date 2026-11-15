@@ -67,6 +67,14 @@ describe('estimateCrawl', () => {
       willExhaustQuota: false,
       warning: null,
       explanation: ESTIMATE.explanation,
+      // The cost-control fields (15 Nov 2026); an answer without them reads as these.
+      includeResources: [],
+      data: null,
+      shareOfRemaining: null,
+      consentRequired: false,
+      risks: [],
+      suggestedMaxDataMb: null,
+      estimateId: null,
     });
   });
 

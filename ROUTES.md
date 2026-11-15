@@ -3,8 +3,8 @@
 Checked against the API's route list (`tests/fixtures/routes.tsv`, generated
 from kobe-scraper integration/2026-11-12b at 228857dc with the module routers
 mounted as `kernel/bootstrap.py` does; 280 rows), plus the three
-crawl-estimate routes below, added by hand from the API contract until the
-list is regenerated (283 rows). `tests/contract.test.ts` calls every public
+crawl-estimate routes and the three cost-control routes below, added by
+hand from the API contracts until the list is regenerated (286 rows). `tests/contract.test.ts` calls every public
 method and fails on any request that is not a live route.
 
 All paths are under `/api/v1/organizations/{organization_id}/`.
@@ -21,6 +21,21 @@ feature/2026-11-14-crawl-estimate, not yet merged).
 | POST | webgrph/crawl/{id}/continue | `continueCrawl(id, {maxPages?, maxDepth?})`; body `{max_pages?, max_depth?}` only when an option is given, otherwise no body (0.7.0 sent `{}`); 422 `continue_cannot_lower` |
 | POST | webgrph/crawl-extract/{job_id}/continue | new `webgrph.continueCrawlExtract`; same body |
 | GET | webgrph/crawl/{id}, webgrph/crawl-extract/{job_id} | also read `time_budget_s`, `elapsed_s`, `est_remaining_s` (null until reported) |
+
+## Unreleased: cost control
+
+From the cost-control contract of 15 Nov 2026 (`COST-CONTROL-CONTRACT.md`;
+backend branch feature/2026-11-15-cost-control, not yet merged).
+
+| Method | Path | Unreleased |
+|---|---|---|
+| POST | webgrph/map | new `webgrph.mapSite`; body `{url, max_urls?}`; returns `SiteMap`; metered like a crawl |
+| GET | artifacts/{artifact_id} | new `client.getArtifact`; returns `Artifact` |
+| GET | artifacts/{artifact_id}/content | new `client.downloadArtifact`; returns the HTML as bytes |
+| POST | webgrph/crawl, webgrph/crawl-extract | also send `include_resources?`, `max_data_mb?`, `estimate_id?`, `cost_acknowledged` (only when true), `urls?`, `include_paths?`; 409 `cost_acknowledgement_required` (`CostAcknowledgementRequiredError`) |
+| POST | webgrph/crawl/{id}/continue, webgrph/crawl-extract/{job_id}/continue | also send `max_data_mb?` |
+| POST | webgrph/crawl/estimate, webgrph/crawl-extract/estimate | also send `include_resources?`; read `include_resources`, `data`, `share_of_remaining`, `consent_required`, `risks`, `suggested_max_data_mb`, `estimate_id` |
+| GET | webgrph/crawl/{id}, webgrph/crawl-extract/{job_id} | also read `data_used_mb`, `max_data_mb`, `include_resources`; `partial_reason` may be `data_limit` |
 
 ## What 0.2.0 called
 
