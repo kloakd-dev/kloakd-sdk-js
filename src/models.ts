@@ -133,7 +133,12 @@ export interface CrawlResult extends Paginated {
   held: boolean;
   /** True when the crawl stopped before asking for every page it found. Null until the crawl reports it. */
   isPartial: boolean | null;
-  /** Why it is partial: `time_budget`, `max_pages` or `error`. */
+  /**
+   * Why it is partial: `time_budget`, `max_pages`, `data_limit` or `error`.
+   * `data_limit`: the crawl reached its `maxDataMb` (the message reads
+   * "Stopped at your data limit of N MB. Continue with a higher limit to
+   * fetch more."); continue it with a higher `maxDataMb`.
+   */
   partialReason: string | null;
   /** True when `webgrph.continueCrawl(crawlId)` can carry the crawl on. */
   resumable: boolean | null;
@@ -149,6 +154,12 @@ export interface CrawlResult extends Paginated {
   elapsedS: number | null;
   /** Seconds left of the time budget (`est_remaining_s`). Null until the crawl reports it. */
   estRemainingS: number | null;
+  /** Data the crawl has used so far, in MB (`data_used_mb`). Null when the API did not send it. */
+  dataUsedMb: number | null;
+  /** The crawl's data limit in MB (`max_data_mb`); null when it has none. */
+  maxDataMb: number | null;
+  /** The page extras the crawl loads (`include_resources`); null when the API did not send them. */
+  includeResources: string[] | null;
   readonly ok: boolean;
 }
 
@@ -168,6 +179,11 @@ export interface CrawlContinueResult {
 export interface CrawlContinueOptions {
   maxPages?: number;
   maxDepth?: number;
+  /**
+   * A new, higher data limit in MB (`max_data_mb`), for a job that stopped
+   * at its data limit (`partialReason` `data_limit`).
+   */
+  maxDataMb?: number;
 }
 
 /** `webgrph.continueCrawlExtract`: the job's crawl is queued again and the new pages are extracted. */
@@ -177,6 +193,15 @@ export interface CrawlExtractContinueResult {
   crawlId: string;
   /** `queued`. */
   status: string;
+  /** The crawl limits the continued job runs with (after clamping to the plan). */
+  limits: { maxPages: number | null; maxDepth: number | null };
+  links: CrawlExtractLinks | null;
+  /** The new time budget in seconds (`time_budget_s`); null when the API did not send it. */
+  timeBudgetS: number | null;
+  /** Seconds the job's crawl had already used (`elapsed_s`); null when the API did not send it. */
+  elapsedS: number | null;
+  /** The job's data limit in MB (`max_data_mb`); null when it has none or the API did not send it. */
+  maxDataMb: number | null;
 }
 
 /** A crawl or crawl-extract estimate's limits for the plan. */
@@ -200,6 +225,42 @@ export interface CrawlEstimateSite {
 export interface CrawlEstimateRange {
   low: number;
   high: number;
+}
+
+/**
+ * A typical–high range of an estimate's data figures (MB, or a share of the
+ * remaining allowance for `shareOfRemaining`). `low` is null where the API
+ * gives none (it does only for `total_mb`).
+ */
+export interface CrawlEstimateDataRange {
+  low: number | null;
+  typical: number;
+  high: number;
+}
+
+/**
+ * The page extras a job can load (all off by default): `images`, `media`,
+ * `fonts`, `stylesheets` and `tracking`. Content (`document`, `script`,
+ * `data`) is always loaded.
+ */
+export type IncludeResource = 'images' | 'media' | 'fonts' | 'stylesheets' | 'tracking';
+
+/** The estimate's data use (`data`). */
+export interface CrawlEstimateData {
+  /** Where the page weight came from: `site_profile`, `root_page` or `typical`. */
+  source: string;
+  /** MB per page with the chosen extras. */
+  perPageMb: CrawlEstimateDataRange;
+  /** MB for the whole job with the chosen extras. */
+  totalMb: CrawlEstimateDataRange;
+  /** MB for the whole job if every extra were loaded. */
+  totalMbAllResources: CrawlEstimateDataRange;
+  /** MB saved by leaving out the extras not chosen. */
+  savingMb: CrawlEstimateDataRange;
+  /** MB per page by category: document, script, data, images, media, fonts, stylesheets, tracking. */
+  byCategoryMbPerPage: Record<string, number>;
+  /** MB the whole job saves by leaving out each extra. */
+  savingByCategoryMb: Record<string, number>;
 }
 
 /**
@@ -234,6 +295,33 @@ export interface CrawlEstimate {
   warning: string | null;
   /** What a crawl (or crawl & extract) does, in a sentence or two. */
   explanation: string;
+  /**
+   * The extras the estimate counted as loaded (`include_resources`): the
+   * effective set, including any locked on.
+   */
+  includeResources: string[];
+  /**
+   * Extras the user cannot turn off for this job (`include_resources_locked`):
+   * `captureMode` `visual` locks `images` and `stylesheets`. Empty when none
+   * is locked or the API did not send it.
+   */
+  includeResourcesLocked: string[];
+  /** The data use, by source and category; null when the API sent none. */
+  data: CrawlEstimateData | null;
+  /** The share of the remaining allowance the job may use (0.01 = 1%); null when unknown. */
+  shareOfRemaining: CrawlEstimateDataRange | null;
+  /**
+   * True when the job needs the user's acknowledgement: a dashboard session
+   * must then start it with `estimateId` and `costAcknowledged: true` (409
+   * `cost_acknowledgement_required` otherwise). API keys are not refused.
+   */
+  consentRequired: boolean;
+  /** Plain sentences on what may go wrong and still use data. */
+  risks: string[];
+  /** A data limit for the job in MB (the high estimate, rounded up); null when the API sent none. */
+  suggestedMaxDataMb: number | null;
+  /** The opaque, signed id of this estimate (valid 30 minutes); pass it as `estimateId` when starting. */
+  estimateId: string | null;
 }
 
 /**
@@ -244,7 +332,7 @@ export interface CrawlExtractCrawl {
   /** The crawl's own status, including `held_quota`. */
   status: string | null;
   isPartial: boolean | null;
-  /** `time_budget`, `max_pages` or `error`. */
+  /** `time_budget`, `max_pages`, `data_limit` (the job's `maxDataMb` was reached) or `error`. */
   partialReason: string | null;
   pagesDiscovered: number | null;
   pagesFetched: number | null;
@@ -371,6 +459,12 @@ export interface CrawlExtractStatus {
   elapsedS: number | null;
   /** Seconds left of the crawl's time budget (`est_remaining_s`). Null until the crawl reports it. */
   estRemainingS: number | null;
+  /** Data the job has used so far, in MB (`data_used_mb`). Null when the API did not send it. */
+  dataUsedMb: number | null;
+  /** The job's data limit in MB (`max_data_mb`); null when it has none. */
+  maxDataMb: number | null;
+  /** The page extras the job loads (`include_resources`); null when the API did not send them. */
+  includeResources: string[] | null;
   /**
    * True when the job's crawl is paused because the organisation's quota
    * ran out (`crawl.status` is `held_quota`). The job has not failed and is
@@ -900,4 +994,47 @@ export interface UnifiedScrapeStatus {
   /** The job's stored result document; null until there is one. */
   result: Record<string, unknown> | null;
   escalationPath: UnifiedEscalation[];
+}
+
+/** A branch of a site map: the URLs under one path prefix. */
+export interface SiteMapBranch {
+  /** The path prefix, for example `/products/`; `other` groups the branches past a level's cap of 50. */
+  path: string;
+  urlCount: number;
+  sampleUrls: string[];
+  /** The next level down (the tree is at most 3 levels deep), sorted by `urlCount`. */
+  children: SiteMapBranch[];
+}
+
+/** `webgrph.mapSite`: the URLs a site lists, as a tree by path. */
+export interface SiteMap {
+  url: string;
+  /** Where the URLs came from: `sitemap`, `links` or `both`. */
+  source: string;
+  totalUrls: number;
+  /** True when the site had more than `maxUrls` URLs. */
+  truncated: boolean;
+  /** Data the map used, in MB. */
+  dataUsedMb: number;
+  branches: SiteMapBranch[];
+}
+
+/** A stored artifact's metadata (`GET artifacts/{artifact_id}`). */
+export interface Artifact {
+  id: string;
+  /** `FETCHED_CONTENT`, or `DEGRADED_FETCHED_CONTENT` for a page fetched in a degraded way. Only these two are served. */
+  type: string;
+  /** The page the artifact was fetched from; null when it has none. */
+  url: string | null;
+  createdAt: string | null;
+  sizeBytes: number | null;
+  contentType: string | null;
+  /** The URL the fetch ended at after redirects; null when the API did not record it. */
+  finalUrl: string | null;
+  /** The HTTP status the page answered with; null when the API did not record it. */
+  statusCode: number | null;
+  /** True when the fetch was verified as the real page (false when the API did not say). */
+  verified: boolean;
+  /** The API path of the content (`GET artifacts/{artifact_id}/content`); null when the API did not send it. */
+  contentUrl: string | null;
 }

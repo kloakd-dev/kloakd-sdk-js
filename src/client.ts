@@ -44,6 +44,7 @@ import { SkanyrNamespace } from './modules/skanyr.js';
 import { WebgrphNamespace } from './modules/webgrph.js';
 import type { CrawlOptions } from './modules/webgrph.js';
 import type {
+  Artifact,
   BatchJob,
   BatchJobItem,
   BatchJobResults,
@@ -292,6 +293,46 @@ export class Kloakd {
   async downloadBatchJob(batchJobId: string, filePath: string, opts: { format?: ExportFormat } = {}): Promise<SavedExport> {
     const format = checkExportFormat(opts.format);
     return saveExport(this._transport, `batch-jobs/${seg(batchJobId)}/export`, { format }, filePath);
+  }
+
+  /**
+   * A stored page's metadata (`GET artifacts/{artifact_id}`): id, type
+   * (`FETCHED_CONTENT` or `DEGRADED_FETCHED_CONTENT`), url, createdAt,
+   * sizeBytes, contentType, finalUrl, statusCode, verified and contentUrl.
+   * Only your organisation's fetched pages are served. Errors (ApiError):
+   * 404 `Artifact not found` for a session or cookie artifact, another
+   * organisation's artifact or an unknown id; 403 for the wrong
+   * organisation; 422 for an id that is not a UUID.
+   */
+  async getArtifact(artifactId: string): Promise<Artifact> {
+    const raw = await this._transport.get(`artifacts/${seg(artifactId)}`);
+    const text = (v: unknown): string | null => (v === undefined || v === null ? null : String(v));
+    return {
+      id: String(raw['id'] ?? artifactId),
+      type: String(raw['type'] ?? ''),
+      url: text(raw['url']),
+      createdAt: text(raw['created_at']),
+      sizeBytes: raw['size_bytes'] === undefined || raw['size_bytes'] === null ? null : Number(raw['size_bytes']),
+      contentType: text(raw['content_type']),
+      finalUrl: text(raw['final_url']),
+      statusCode: raw['status_code'] === undefined || raw['status_code'] === null ? null : Number(raw['status_code']),
+      verified: Boolean(raw['verified']),
+      contentUrl: text(raw['content_url']),
+    };
+  }
+
+  /**
+   * A stored page's raw HTML as bytes (`GET artifacts/{artifact_id}/content`;
+   * the API sends it as `text/html; charset=utf-8`, an attachment named
+   * `<host>-<id8>.html`). Decode it with `new TextDecoder().decode(bytes)`.
+   * Treat it as untrusted HTML: do not render it outside a sandbox.
+   * Errors (ApiError): 404 `Artifact not found` for a session or cookie
+   * artifact, another organisation's artifact, an unknown id or an artifact
+   * with no HTML; 403 for the wrong organisation; 422 for an id that is not
+   * a UUID.
+   */
+  async downloadArtifact(artifactId: string): Promise<Uint8Array> {
+    return this._transport.requestBytes('GET', `artifacts/${seg(artifactId)}/content`);
   }
 
   /**

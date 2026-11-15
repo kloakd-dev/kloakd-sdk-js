@@ -127,6 +127,13 @@ export interface PageOptions extends HandoffOptions {
   options?: Record<string, unknown>;
   /** One record per element this CSS selector matches; see `SchemaSpec.itemSelector`. Needs `schema`. */
   itemSelector?: string;
+  /**
+   * Page extras to load (`include_resources`): any of `images`, `media`,
+   * `fonts`, `stylesheets`, `tracking`. Page extras are off by default on
+   * every browser route: leaving this out loads none (the page's content
+   * always loads). Sent only when given.
+   */
+  includeResources?: string[];
 }
 
 /** Options for `extractHtml`. */
@@ -134,6 +141,13 @@ export interface ExtractHtmlOptions {
   schema?: ExtractSchema;
   /** One record per element this CSS selector matches; see `SchemaSpec.itemSelector`. Needs `schema`. */
   itemSelector?: string;
+  /**
+   * Page extras to load (`include_resources`): any of `images`, `media`,
+   * `fonts`, `stylesheets`, `tracking`. Page extras are off by default on
+   * every browser route: leaving this out loads none (the page's content
+   * always loads). Sent only when given.
+   */
+  includeResources?: string[];
 }
 
 function schemaBody(body: Record<string, unknown>, opts: { schema?: ExtractSchema; itemSelector?: string }): void {
@@ -158,6 +172,9 @@ export class KolektrNamespace {
    * });
    * r.records; // [{ title: 'A Light in the Attic', price: '£51.77' }, ...] — one per book
    * ```
+   *
+   * Page extras (images, video and audio, fonts, stylesheets, tracking) are
+   * off by default; ask for them with `includeResources`.
    */
   async page(url: string, opts: PageOptions = {}): Promise<ExtractionResult> {
     const body: Record<string, unknown> = { url };
@@ -167,6 +184,7 @@ export class KolektrNamespace {
     if (opts.sessionArtifactId) body['session_artifact_id'] = opts.sessionArtifactId;
     if (opts.apiMapArtifactId) body['api_map_artifact_id'] = opts.apiMapArtifactId;
     if (opts.options) body['options'] = opts.options;
+    if (opts.includeResources !== undefined) body['include_resources'] = opts.includeResources;
     return parseExtraction(await postFollowingHandoff(this._t, 'kolektr/extract', body, opts), url);
   }
 
@@ -183,6 +201,7 @@ export class KolektrNamespace {
   ): Promise<ExtractionResult> {
     const body: Record<string, unknown> = { html, url };
     schemaBody(body, opts);
+    if (opts.includeResources !== undefined) body['include_resources'] = opts.includeResources;
     const raw = await this._t.post('kolektr/extract/html', body);
     return parseExtraction(raw, url);
   }
