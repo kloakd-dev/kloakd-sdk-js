@@ -1004,11 +1004,19 @@ export interface SiteMap {
 /** A stored artifact's metadata (`GET artifacts/{artifact_id}`). */
 export interface Artifact {
   id: string;
-  /** The artifact type as the API names it (only fetched-content artifacts are served). */
+  /** `FETCHED_CONTENT`, or `DEGRADED_FETCHED_CONTENT` for a page fetched in a degraded way. Only these two are served. */
   type: string;
   /** The page the artifact was fetched from; null when it has none. */
   url: string | null;
   createdAt: string | null;
   sizeBytes: number | null;
   contentType: string | null;
+  /** The URL the fetch ended at after redirects; null when the API did not record it. */
+  finalUrl: string | null;
+  /** The HTTP status the page answered with; null when the API did not record it. */
+  statusCode: number | null;
+  /** True when the fetch was verified as the real page (false when the API did not say). */
+  verified: boolean;
+  /** The API path of the content (`GET artifacts/{artifact_id}/content`); null when the API did not send it. */
+  contentUrl: string | null;
 }

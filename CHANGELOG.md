@@ -50,7 +50,8 @@ feature/2026-11-15-cost-control, not yet merged).
 - `webgrph.mapSite(url, { maxUrls? })` (`POST webgrph/map`) returns a
   `SiteMap` with its `SiteMapBranch` tree.
 - `client.getArtifact(id)` (`GET artifacts/{artifact_id}`, returning
-  `Artifact`) and `client.downloadArtifact(id)` (`GET
+  `Artifact`: type `FETCHED_CONTENT` or `DEGRADED_FETCHED_CONTENT`, url,
+  size, content type, final URL, status code, verified, content URL) and `client.downloadArtifact(id)` (`GET
   artifacts/{artifact_id}/content`, returning the HTML as a `Uint8Array`).
 - `CostAcknowledgementRequiredError` for 409 `cost_acknowledgement_required`.
 

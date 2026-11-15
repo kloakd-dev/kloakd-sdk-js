@@ -318,23 +318,41 @@ describe('mapSite', () => {
   });
 });
 
+const ART_ID = '3f2b8c1e-5a6d-4e7f-9a0b-1c2d3e4f5a6b';
+
 describe('artifacts', () => {
-  it('getArtifact reads the metadata', async () => {
+  it('getArtifact reads the metadata the API sends', async () => {
     const f = mockFetch({
-      id: 'a 1', type: 'fetched_content', url: 'https://example.com/', created_at: '2026-11-15T01:02:03Z',
-      size_bytes: 2048, content_type: 'text/html',
+      id: ART_ID, type: 'FETCHED_CONTENT', url: 'https://example.com/', created_at: '2026-11-15T01:02:03Z',
+      size_bytes: 2048, content_type: 'text/html; charset=utf-8', final_url: 'https://www.example.com/',
+      status_code: 200, verified: true, content_url: `${ORG_PREFIX}/artifacts/${ART_ID}/content`,
     });
-    const r = await makeClient(f).getArtifact('a 1');
-    expect([methodOf(f), pathOf(f)]).toEqual(['GET', 'artifacts/a%201']);
+    const r = await makeClient(f).getArtifact(ART_ID);
+    expect([methodOf(f), pathOf(f)]).toEqual(['GET', `artifacts/${ART_ID}`]);
     expect(r).toEqual({
-      id: 'a 1', type: 'fetched_content', url: 'https://example.com/', createdAt: '2026-11-15T01:02:03Z',
-      sizeBytes: 2048, contentType: 'text/html',
+      id: ART_ID, type: 'FETCHED_CONTENT', url: 'https://example.com/', createdAt: '2026-11-15T01:02:03Z',
+      sizeBytes: 2048, contentType: 'text/html; charset=utf-8', finalUrl: 'https://www.example.com/',
+      statusCode: 200, verified: true, contentUrl: `${ORG_PREFIX}/artifacts/${ART_ID}/content`,
     });
   });
 
-  it('getArtifact reads missing values as null', async () => {
-    const r = await makeClient(mockFetch({})).getArtifact('a1');
-    expect(r).toEqual({ id: 'a1', type: '', url: null, createdAt: null, sizeBytes: null, contentType: null });
+  it('a degraded fetch with no final URL or status', async () => {
+    const r = await makeClient(mockFetch({
+      id: ART_ID, type: 'DEGRADED_FETCHED_CONTENT', url: 'https://example.com/', created_at: '2026-11-15T01:02:03Z',
+      size_bytes: 10, content_type: 'text/html', final_url: null, status_code: null, verified: false,
+      content_url: `${ORG_PREFIX}/artifacts/${ART_ID}/content`,
+    })).getArtifact(ART_ID);
+    expect([r.type, r.finalUrl, r.statusCode, r.verified]).toEqual(['DEGRADED_FETCHED_CONTENT', null, null, false]);
+  });
+
+  it('getArtifact encodes the id and reads missing values as null (verified false)', async () => {
+    const f = mockFetch({});
+    const r = await makeClient(f).getArtifact('a 1');
+    expect(pathOf(f)).toBe('artifacts/a%201');
+    expect(r).toEqual({
+      id: 'a 1', type: '', url: null, createdAt: null, sizeBytes: null, contentType: null,
+      finalUrl: null, statusCode: null, verified: false, contentUrl: null,
+    });
   });
 
   it('downloadArtifact returns the content as bytes', async () => {
@@ -342,20 +360,37 @@ describe('artifacts', () => {
     const f = jest.fn(async () => ({
       status: 200,
       ok: true,
-      headers: { get: (h: string) => ({ 'content-type': 'text/plain; charset=utf-8', 'content-disposition': 'attachment; filename="a1.html"' } as Record<string, string>)[h.toLowerCase()] ?? null },
+      headers: { get: (h: string) => ({ 'content-type': 'text/html; charset=utf-8', 'content-disposition': 'attachment; filename="example.com-3f2b8c1e.html"' } as Record<string, string>)[h.toLowerCase()] ?? null },
       arrayBuffer: async () => new TextEncoder().encode(html).buffer,
       body: undefined,
     }));
-    const bytes = await makeClient(f).downloadArtifact('a1');
+    const bytes = await makeClient(f).downloadArtifact(ART_ID);
     expect(bytes).toBeInstanceOf(Uint8Array);
     expect(new TextDecoder().decode(bytes)).toBe(html);
-    expect([methodOf(f), pathOf(f), rawBody(f)]).toEqual(['GET', 'artifacts/a1/content', undefined]);
+    expect([methodOf(f), pathOf(f), rawBody(f)]).toEqual(['GET', `artifacts/${ART_ID}/content`, undefined]);
   });
 
-  it('an artifact that is not served is the API 404', async () => {
+  it('an artifact that is not served is the API 404 (session, other org, unknown, no HTML)', async () => {
     const f = mockFetch({ detail: 'Artifact not found' }, 404);
-    const err = await makeClient(f).downloadArtifact('session-1').catch((e) => e);
+    const err = await makeClient(f).downloadArtifact(ART_ID).catch((e) => e);
     expect(err).toBeInstanceOf(ApiError);
-    expect(err.statusCode).toBe(404);
+    expect([err.statusCode, err.message]).toEqual([404, 'KLOAKD API error 404: Artifact not found']);
+  });
+
+  it('the wrong organisation is the API 403', async () => {
+    const f = mockFetch({ detail: 'Forbidden' }, 403);
+    const err = await makeClient(f).getArtifact(ART_ID).catch((e) => e);
+    expect(err).toBeInstanceOf(KloakdError);
+    expect(err.statusCode).toBe(403);
+  });
+
+  it('an id that is not a UUID is the API 422', async () => {
+    const f = mockFetch({ detail: [{ loc: ['path', 'artifact_id'], msg: 'Input should be a valid UUID', type: 'uuid_parsing' }] }, 422);
+    const err = await makeClient(f).getArtifact('not-a-uuid').catch((e) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.statusCode).toBe(422);
+    const err2 = await makeClient(mockFetch({ detail: [{ loc: ['path', 'artifact_id'], msg: 'Input should be a valid UUID', type: 'uuid_parsing' }] }, 422))
+      .downloadArtifact('not-a-uuid').catch((e) => e);
+    expect([err2 instanceof ApiError, err2.statusCode]).toEqual([true, 422]);
   });
 });

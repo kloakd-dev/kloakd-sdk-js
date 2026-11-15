@@ -309,11 +309,19 @@ batch job's results. The batch export does not say the job's state:
 ## A fetched page from History
 
 `client.getArtifact(artifactId)` returns a stored page's metadata (`id`,
-`type`, `url`, `createdAt`, `sizeBytes`, `contentType`), and
-`client.downloadArtifact(artifactId)` its HTML as a `Uint8Array`. Only your
-organisation's fetched pages are served; any other artifact (login
-sessions and cookies included) is a 404. Treat the HTML as untrusted: do
-not render it outside a sandbox.
+`type`, `url`, `createdAt`, `sizeBytes`, `contentType`, `finalUrl`,
+`statusCode`, `verified`, `contentUrl`). `type` is `FETCHED_CONTENT`, or
+`DEGRADED_FETCHED_CONTENT` for a page fetched in a degraded way.
+`client.downloadArtifact(artifactId)` returns the raw HTML as a
+`Uint8Array` (the API sends `text/html; charset=utf-8` as an attachment
+named `<host>-<id8>.html`). Treat the HTML as untrusted: do not render it
+outside a sandbox.
+
+Only your organisation's fetched pages are served. Both calls raise
+`ApiError`: 404 (`Artifact not found`) for a login session or cookie
+artifact, another organisation's artifact, an unknown id, or (download)
+an artifact with no HTML; 403 for the wrong organisation; 422 for an id
+that is not a UUID.
 
 ```typescript
 const meta = await client.getArtifact(artifactId);
