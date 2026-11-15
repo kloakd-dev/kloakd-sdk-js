@@ -4,7 +4,7 @@ Checked against the API's route list (`tests/fixtures/routes.tsv`, generated
 from kobe-scraper integration/2026-11-12b at 228857dc with the module routers
 mounted as `kernel/bootstrap.py` does; 280 rows), plus the three
 crawl-estimate routes and the three cost-control routes below, added by
-hand from the API contracts until the list is regenerated (286 rows). `tests/contract.test.ts` calls every public
+hand from the API contracts (286 rows). Checked on 15 Nov against the route table of kobe-scraper feature/2026-11-15-cost-control at f6403fc5, generated with the module routers mounted as `kernel/bootstrap.py` does: it matches the 286 rows here except routes these lists have never carried (FastAPI's `/docs`, `/redoc`, `/openapi.json`, and the watcher and crawler health routes under `/api/v1/health/`, which take the watch token), so the list stands as the generated one. `tests/contract.test.ts` calls every public
 method and fails on any request that is not a live route.
 
 All paths are under `/api/v1/organizations/{organization_id}/`.
