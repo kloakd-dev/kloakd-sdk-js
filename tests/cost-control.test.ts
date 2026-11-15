@@ -432,3 +432,78 @@ describe('page extras on evadr.fetch and the kolektr extract calls', () => {
     expect(bodyOf(f, 1)).toEqual({ url: 'https://example.com/', include_resources: [] });
   });
 });
+
+describe('the backend at feature/2026-11-15-cost-control 964ba78c', () => {
+  it('the estimate reads include_resources_locked, and an older answer without it reads empty', async () => {
+    const r = await makeClient(mockFetch({ ...ESTIMATE, include_resources: ['images', 'stylesheets'], include_resources_locked: ['images', 'stylesheets'] }))
+      .webgrph.estimateCrawl('https://example.com/', { captureMode: 'visual' });
+    expect([r.includeResources, r.includeResourcesLocked]).toEqual([['images', 'stylesheets'], ['images', 'stylesheets']]);
+    const old = await makeClient(mockFetch(ESTIMATE)).webgrph.estimateCrawl('https://example.com/');
+    expect(old.includeResourcesLocked).toEqual([]);
+  });
+
+  it('estimateCrawl and estimateCrawlExtract send capture_mode when given, and not otherwise', async () => {
+    const f = mockFetchSequence([{ body: ESTIMATE }, { body: ESTIMATE }, { body: ESTIMATE }]);
+    const c = makeClient(f);
+    await c.webgrph.estimateCrawl('https://example.com/', { captureMode: 'visual' });
+    await c.webgrph.estimateCrawlExtract('https://example.com/', { captureMode: 'visual', includeResources: ['fonts'] });
+    await c.webgrph.estimateCrawlExtract('https://example.com/', { maxPages: 3 });
+    expect(bodyOf(f, 0)).toEqual({ url: 'https://example.com/', capture_mode: 'visual' });
+    expect([pathOf(f, 1), bodyOf(f, 1)]).toEqual(['webgrph/crawl-extract/estimate', { url: 'https://example.com/', include_resources: ['fonts'], capture_mode: 'visual' }]);
+    expect(bodyOf(f, 2)).toEqual({ url: 'https://example.com/', max_pages: 3 });
+  });
+
+  it('evadr.fetchAsync sends include_resources when given, and the old body otherwise', async () => {
+    const f = mockFetchSequence([{ body: { job_id: 'e1' }, status: 202 }, { body: { job_id: 'e2' }, status: 202 }]);
+    const c = makeClient(f);
+    await c.evadr.fetchAsync('https://example.com/', { includeResources: ['images'] });
+    await c.evadr.fetchAsync('https://example.com/', { webhookUrl: 'https://hook.example/' });
+    expect([pathOf(f, 0), bodyOf(f, 0)]).toEqual(['evadr/fetch/async', { url: 'https://example.com/', include_resources: ['images'] }]);
+    expect(bodyOf(f, 1)).toEqual({ url: 'https://example.com/', webhook_url: 'https://hook.example/' });
+  });
+
+  it('evadr.fetchStream passes include_resources to the async fetch', async () => {
+    const f = mockFetch({ job_id: 'e1' }, 202);
+    const it = makeClient(f).evadr.fetchStream('https://example.com/', { includeResources: ['media'] })[Symbol.asyncIterator]();
+    await it.next().catch(() => undefined);
+    expect([pathOf(f, 0), bodyOf(f, 0)]).toEqual(['evadr/fetch/async', { url: 'https://example.com/', include_resources: ['media'] }]);
+  });
+
+  it('kolektr.extractHtml sends include_resources when given, and the old body otherwise', async () => {
+    const f = mockFetchSequence([{ body: { success: true, records: [] } }, { body: { success: true, records: [] } }]);
+    const c = makeClient(f);
+    await c.kolektr.extractHtml('<html/>', 'https://example.com/', { includeResources: ['stylesheets'] });
+    await c.kolektr.extractHtml('<html/>', 'https://example.com/');
+    expect([pathOf(f, 0), bodyOf(f, 0)]).toEqual(['kolektr/extract/html', { html: '<html/>', url: 'https://example.com/', include_resources: ['stylesheets'] }]);
+    expect(bodyOf(f, 1)).toEqual({ html: '<html/>', url: 'https://example.com/' });
+  });
+
+  it('the crawl-extract continue 202 answer is read in full', async () => {
+    const f = mockFetch({
+      success: true, job_id: 'j1', crawl_id: 'c1', status: 'queued',
+      limits: { max_pages: 500, max_depth: 3 },
+      links: { status: '/s', results: '/r', pages: '/p', cancel: '/c', export: { csv: '/e.csv' }, crawl_events: '/ce', events: '/ev' },
+      time_budget_s: 900, elapsed_s: 120.5, max_data_mb: 200,
+    }, 202);
+    const r = await makeClient(f).webgrph.continueCrawlExtract('j1', { maxPages: 500, maxDataMb: 200 });
+    expect(r).toEqual({
+      success: true, jobId: 'j1', crawlId: 'c1', status: 'queued',
+      limits: { maxPages: 500, maxDepth: 3 },
+      links: { status: '/s', results: '/r', pages: '/p', cancel: '/c', export: { csv: '/e.csv' }, crawlEvents: '/ce', events: '/ev' },
+      timeBudgetS: 900, elapsedS: 120.5, maxDataMb: 200,
+    });
+  });
+
+  it.each([
+    [409, 'continue_needs_more_pages'],
+    [409, 'continue_needs_more_data'],
+    [409, 'not_continuable'],
+    [409, 'already_continuing'],
+    [422, 'continue_cannot_lower'],
+  ])('the crawl-extract continue %i %s is an ApiError with that code', async (status, code) => {
+    const f = mockFetch({ detail: { error: code, message: 'no' } }, status);
+    const err = await makeClient(f).webgrph.continueCrawlExtract('j1', { maxPages: 1 }).catch((e) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect([err.statusCode, err.code]).toEqual([status, code]);
+  });
+});

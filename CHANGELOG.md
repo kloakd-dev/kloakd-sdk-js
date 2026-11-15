@@ -54,8 +54,18 @@ feature/2026-11-15-cost-control, not yet merged).
   size, content type, final URL, status code, verified, content URL) and `client.downloadArtifact(id)` (`GET
   artifacts/{artifact_id}/content`, returning the HTML as a `Uint8Array`).
 - `CostAcknowledgementRequiredError` for 409 `cost_acknowledgement_required`.
-- `evadr.fetch` and `kolektr.page` / `kolektr.pageAll` take
-  `includeResources` (`include_resources`, sent only when given). Page
+- `estimateCrawl` and `estimateCrawlExtract` take `captureMode`
+  (`capture_mode`), and `CrawlEstimate` gains `includeResourcesLocked` (the
+  extras that cannot be turned off; `visual` locks images and stylesheets).
+  Its `includeResources` is the effective set.
+- `CrawlExtractContinueResult` gains `limits`, `links`, `timeBudgetS`,
+  `elapsedS` and `maxDataMb`. The crawl-extract continue answers 202; its
+  409 codes `continue_needs_more_pages`, `continue_needs_more_data`,
+  `not_continuable` and `already_continuing` are documented (backend
+  feature/2026-11-15-cost-control at 964ba78c).
+- `evadr.fetch`, `evadr.fetchAsync` / `evadr.fetchStream`, `kolektr.page`
+  / `kolektr.pageAll` and `kolektr.extractHtml` take `includeResources`
+  (`include_resources`, sent only when given). Page
   extras are off by default on every browser route; leaving it out loads
   none. With `captureMode` `visual`, a crawl or crawl-extract includes
   images and stylesheets automatically.

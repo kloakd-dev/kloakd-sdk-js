@@ -69,6 +69,7 @@ describe('estimateCrawl', () => {
       explanation: ESTIMATE.explanation,
       // The cost-control fields (15 Nov 2026); an answer without them reads as these.
       includeResources: [],
+      includeResourcesLocked: [],
       data: null,
       shareOfRemaining: null,
       consentRequired: false,
@@ -148,7 +149,11 @@ describe('continue with options', () => {
     const f = mockFetch({ success: true, job_id: 'j 1', crawl_id: 'c1', status: 'queued' }, 202);
     const r = await makeClient(f).webgrph.continueCrawlExtract('j 1');
     expect([methodOf(f), pathOf(f), rawBody(f)]).toEqual(['POST', 'webgrph/crawl-extract/j%201/continue', undefined]);
-    expect(r).toEqual({ success: true, jobId: 'j 1', crawlId: 'c1', status: 'queued' });
+    expect(r).toEqual({
+      success: true, jobId: 'j 1', crawlId: 'c1', status: 'queued',
+      // Fields of the 202 answer (15 Nov 2026) the API did not send here.
+      limits: { maxPages: null, maxDepth: null }, links: null, timeBudgetS: null, elapsedS: null, maxDataMb: null,
+    });
   });
 
   it('continueCrawlExtract with options sends them', async () => {

@@ -141,6 +141,13 @@ export interface ExtractHtmlOptions {
   schema?: ExtractSchema;
   /** One record per element this CSS selector matches; see `SchemaSpec.itemSelector`. Needs `schema`. */
   itemSelector?: string;
+  /**
+   * Page extras to load (`include_resources`): any of `images`, `media`,
+   * `fonts`, `stylesheets`, `tracking`. Page extras are off by default on
+   * every browser route: leaving this out loads none (the page's content
+   * always loads). Sent only when given.
+   */
+  includeResources?: string[];
 }
 
 function schemaBody(body: Record<string, unknown>, opts: { schema?: ExtractSchema; itemSelector?: string }): void {
@@ -194,6 +201,7 @@ export class KolektrNamespace {
   ): Promise<ExtractionResult> {
     const body: Record<string, unknown> = { html, url };
     schemaBody(body, opts);
+    if (opts.includeResources !== undefined) body['include_resources'] = opts.includeResources;
     const raw = await this._t.post('kolektr/extract/html', body);
     return parseExtraction(raw, url);
   }

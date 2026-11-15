@@ -33,8 +33,9 @@ backend branch feature/2026-11-15-cost-control, not yet merged).
 | GET | artifacts/{artifact_id} | new `client.getArtifact`; returns `Artifact`; 404 `Artifact not found`, 403 wrong organisation, 422 not a UUID |
 | GET | artifacts/{artifact_id}/content | new `client.downloadArtifact`; returns the raw HTML (`text/html; charset=utf-8`, attachment) as bytes; same errors, and 404 when there is no HTML |
 | POST | webgrph/crawl, webgrph/crawl-extract | also send `include_resources?`, `max_data_mb?`, `estimate_id?`, `cost_acknowledged` (only when true), `urls?`, `include_paths?`; 409 `cost_acknowledgement_required` (`CostAcknowledgementRequiredError`) |
-| POST | webgrph/crawl/{id}/continue, webgrph/crawl-extract/{job_id}/continue | also send `max_data_mb?` |
-| POST | webgrph/crawl/estimate, webgrph/crawl-extract/estimate | also send `include_resources?`; read `include_resources`, `data`, `share_of_remaining`, `consent_required`, `risks`, `suggested_max_data_mb`, `estimate_id` |
+| POST | webgrph/crawl/{id}/continue, webgrph/crawl-extract/{job_id}/continue | also send `max_data_mb?`. The crawl-extract continue answers 202 `{success, job_id, crawl_id, status, limits, links, time_budget_s?, elapsed_s?, max_data_mb?}`; 409 `continue_needs_more_pages`, `continue_needs_more_data`, `not_continuable`, `already_continuing`; 422 `continue_cannot_lower` |
+| POST | evadr/fetch, evadr/fetch/async, kolektr/extract, kolektr/extract/html | also send `include_resources?` |
+| POST | webgrph/crawl/estimate, webgrph/crawl-extract/estimate | also send `include_resources?`, `capture_mode?`; read `include_resources`, `include_resources_locked`, `data`, `share_of_remaining`, `consent_required`, `risks`, `suggested_max_data_mb`, `estimate_id` |
 | GET | webgrph/crawl/{id}, webgrph/crawl-extract/{job_id} | also read `data_used_mb`, `max_data_mb`, `include_resources`; `partial_reason` may be `data_limit` |
 
 ## What 0.2.0 called

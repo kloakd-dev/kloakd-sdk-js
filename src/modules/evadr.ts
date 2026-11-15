@@ -40,6 +40,13 @@ export interface FetchAsyncOptions {
   useProxy?: boolean;
   sessionArtifactId?: string;
   webhookUrl?: string;
+  /**
+   * Page extras to load (`include_resources`): any of `images`, `media`,
+   * `fonts`, `stylesheets`, `tracking`. Page extras are off by default on
+   * every browser route: leaving this out loads none (the page's content
+   * always loads). Sent only when given.
+   */
+  includeResources?: string[];
 }
 
 export class EvadrNamespace {
@@ -62,13 +69,18 @@ export class EvadrNamespace {
     return parseFetch(await postFollowingHandoff(this._t, 'evadr/fetch', body, opts), url);
   }
 
-  /** Start a fetch as a job; returns the job id (poll with getJob or waitForJob). */
+  /**
+   * Start a fetch as a job; returns the job id (poll with getJob or
+   * waitForJob). Page extras are off by default; ask for them with
+   * `includeResources`.
+   */
   async fetchAsync(url: string, opts: FetchAsyncOptions = {}): Promise<string> {
     const body: Record<string, unknown> = { url };
     if (opts.forceBrowser) body['force_browser'] = true;
     if (opts.useProxy) body['use_proxy'] = true;
     if (opts.sessionArtifactId) body['session_artifact_id'] = opts.sessionArtifactId;
     if (opts.webhookUrl) body['webhook_url'] = opts.webhookUrl;
+    if (opts.includeResources !== undefined) body['include_resources'] = opts.includeResources;
     const raw = await this._t.post('evadr/fetch/async', body);
     return String(raw['job_id']);
   }
@@ -87,6 +99,7 @@ export class EvadrNamespace {
   /**
    * Start a fetch as a job and stream its progress events: pipeline events,
    * or (when the API polls the job instead) STATUS, COMPLETE, FAILED or ERROR.
+   * Takes the options of `fetchAsync`, `includeResources` included.
    */
   async *fetchStream(url: string, opts: FetchAsyncOptions = {}): AsyncIterable<FetchEvent> {
     const jobId = await this.fetchAsync(url, opts);

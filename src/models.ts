@@ -193,6 +193,15 @@ export interface CrawlExtractContinueResult {
   crawlId: string;
   /** `queued`. */
   status: string;
+  /** The crawl limits the continued job runs with (after clamping to the plan). */
+  limits: { maxPages: number | null; maxDepth: number | null };
+  links: CrawlExtractLinks | null;
+  /** The new time budget in seconds (`time_budget_s`); null when the API did not send it. */
+  timeBudgetS: number | null;
+  /** Seconds the job's crawl had already used (`elapsed_s`); null when the API did not send it. */
+  elapsedS: number | null;
+  /** The job's data limit in MB (`max_data_mb`); null when it has none or the API did not send it. */
+  maxDataMb: number | null;
 }
 
 /** A crawl or crawl-extract estimate's limits for the plan. */
@@ -286,8 +295,17 @@ export interface CrawlEstimate {
   warning: string | null;
   /** What a crawl (or crawl & extract) does, in a sentence or two. */
   explanation: string;
-  /** The extras the estimate counted as loaded (`include_resources`). */
+  /**
+   * The extras the estimate counted as loaded (`include_resources`): the
+   * effective set, including any locked on.
+   */
   includeResources: string[];
+  /**
+   * Extras the user cannot turn off for this job (`include_resources_locked`):
+   * `captureMode` `visual` locks `images` and `stylesheets`. Empty when none
+   * is locked or the API did not send it.
+   */
+  includeResourcesLocked: string[];
   /** The data use, by source and category; null when the API sent none. */
   data: CrawlEstimateData | null;
   /** The share of the remaining allowance the job may use (0.01 = 1%); null when unknown. */

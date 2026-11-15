@@ -103,8 +103,12 @@ A page's extras (`images`, `media` for video and audio, `fonts`,
 `stylesheets` and `tracking`) are **not loaded by default**; the page's
 content (the document, its scripts and its data) always is. Ask for an extra
 per job with `includeResources`. With `captureMode: 'visual'`, images and
-stylesheets are included automatically. The same option, off by default,
-is on `evadr.fetch` and `kolektr.page` / `kolektr.pageAll`:
+stylesheets are included automatically: pass `captureMode` to the estimate
+too, and its `includeResourcesLocked` lists the extras that cannot be
+turned off (`includeResources` is then the effective set). The same
+option, off by default, is on `evadr.fetch`, `evadr.fetchAsync` /
+`evadr.fetchStream`, `kolektr.page` / `kolektr.pageAll` and
+`kolektr.extractHtml`:
 
 ```typescript
 await client.evadr.fetch('https://example.com', { includeResources: ['images'] });
@@ -238,8 +242,14 @@ if (crawl.held) {
   raises the limits (clamped to your plan); a crawl that stopped at
   `max_pages` can be continued with a larger `maxPages`. A lower value is a
   422 (`continue_cannot_lower`). Estimate first with `estimateCrawl`.
-  `continueCrawlExtract(jobId, { maxPages, maxDepth })` does the same for a
-  crawl-extract job and extracts the new pages.
+  `continueCrawlExtract(jobId, { maxPages, maxDepth, maxDataMb })` does the
+  same for a crawl-extract job and extracts the new pages. The API answers
+  202 with the job's new `limits`, its `links` and, when it sends them,
+  `timeBudgetS`, `elapsedS` and `maxDataMb`. It refuses with 409
+  `continue_needs_more_pages` (stopped at `max_pages`: give a larger
+  `maxPages`), 409 `continue_needs_more_data` (stopped at its data limit:
+  give a larger `maxDataMb`), 409 `not_continuable`, 409
+  `already_continuing`, or 422 `continue_cannot_lower` (`ApiError.code`).
 
 Each `PageNode` has `fetchStatus` (`fetched`, `unfetched` or `not_requested`)
 and `fetchError`.
