@@ -22,7 +22,8 @@
 
 import { HttpTransport } from './_http.js';
 import { getHandoff, postFollowingHandoff, waitForHandoff } from './_handoff.js';
-import { query, seg } from './_params.js';
+import { query, seg, withRobotsAck } from './_params.js';
+import type { RobotsAcknowledgementOption } from './_params.js';
 import { checkExportFormat, openExport, saveExport } from './_download.js';
 import type { HandoffOptions } from './_handoff.js';
 import {
@@ -83,7 +84,11 @@ export interface KloakdOptions {
   fetchImpl?: typeof fetch;
 }
 
-export interface CrawlOrchestratorOptions {
+/**
+ * Options for `crawl` / `crawlStream`. `robotsAcknowledgedHosts` is sent with
+ * the discovery crawl and with each page's fetch and extraction.
+ */
+export interface CrawlOrchestratorOptions extends RobotsAcknowledgementOption {
   /** Unset: the API's default for the organisation's tier. */
   maxDepth?: number;
   /** Unset: the API's default for the organisation's tier. */
@@ -101,7 +106,7 @@ export interface CrawlOrchestratorOptions {
 }
 
 /** Options for `createBatchJob` (the body of `POST batch-jobs`). */
-export interface BatchJobOptions {
+export interface BatchJobOptions extends RobotsAcknowledgementOption {
   /** How each URL is extracted, for example `{ selectors: { title: 'h1' } }`. */
   extractionConfig?: Record<string, unknown>;
   /** The crawl the URLs came from: its detected-API records are added to the results. */
@@ -113,7 +118,7 @@ export interface BatchJobOptions {
 }
 
 /** Options for `unifiedScrape` (unified_scraping.py UnifiedScrapeRequest) and how a 202 is followed. */
-export interface UnifiedScrapeOptions extends HandoffOptions {
+export interface UnifiedScrapeOptions extends HandoffOptions, RobotsAcknowledgementOption {
   /** What to extract, in plain words. */
   prompt?: string;
   /** auto (the API's default), level1 or level2. */
@@ -349,6 +354,7 @@ export class Kloakd {
     if (opts.crawlId !== undefined) body['crawl_id'] = opts.crawlId;
     if (opts.entityType !== undefined) body['entity_type'] = opts.entityType;
     if (opts.fields !== undefined) body['fields'] = opts.fields;
+    withRobotsAck(body, opts.robotsAcknowledgedHosts);
     return parseBatchJob(await this._transport.post('batch-jobs', body));
   }
 
@@ -444,6 +450,7 @@ export class Kloakd {
     if (opts.context !== undefined) body['context'] = opts.context;
     if (opts.constraints !== undefined) body['constraints'] = opts.constraints;
     if (opts.sessionArtifactId !== undefined) body['session_artifact_id'] = opts.sessionArtifactId;
+    withRobotsAck(body, opts.robotsAcknowledgedHosts);
     const raw = await postFollowingHandoff(this._transport, 'scraping/unified', body, opts);
     return {
       success: raw['success'] !== false,
@@ -507,6 +514,8 @@ export class Kloakd {
     if (opts.maxDepth !== undefined) crawlOpts.maxDepth = opts.maxDepth;
     if (opts.maxPages !== undefined) crawlOpts.maxPages = opts.maxPages;
     if (opts.sessionArtifactId) crawlOpts.sessionArtifactId = opts.sessionArtifactId;
+    const acknowledged = opts.robotsAcknowledgedHosts;
+    if (acknowledged !== undefined && acknowledged.length > 0) crawlOpts.robotsAcknowledgedHosts = acknowledged;
     const crawlResult: CrawlResult = await this.webgrph.crawl(url, crawlOpts);
 
     const total = crawlResult.totalPages;
@@ -516,6 +525,7 @@ export class Kloakd {
     };
 
     const fetchOpts: FetchOptions = opts.sessionArtifactId ? { sessionArtifactId: opts.sessionArtifactId } : {};
+    if (acknowledged !== undefined && acknowledged.length > 0) fetchOpts.robotsAcknowledgedHosts = acknowledged;
     const pages: CrawlPage[] = [];
     let fetched = 0;
     let failed = 0;
@@ -537,6 +547,7 @@ export class Kloakd {
               schema: opts.extractSchema,
               ...(opts.extractItemSelector !== undefined && { itemSelector: opts.extractItemSelector }),
               ...(fetchResult.artifactId && { fetchArtifactId: fetchResult.artifactId }),
+              ...(fetchOpts.robotsAcknowledgedHosts && { robotsAcknowledgedHosts: fetchOpts.robotsAcknowledgedHosts }),
             });
             records = extraction.records;
             structuredData = records[0] ?? null;

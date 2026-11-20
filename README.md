@@ -501,6 +501,82 @@ Event types: `thinking`, `interpretation`, `progress`, `results`, `error`,
 `warning`, `auth_required`, `mfa_required`, `clarification`, `export_ready`,
 `text`.
 
+## robots.txt
+
+KLOAKD reads a site's robots.txt before it asks for a page. When the file
+disallows the page, or cannot be read (a 5xx, a timeout, a dropped
+connection), the call stops with `RobotsDisallowedError` (409
+`ROBOTS_DISALLOWED`) and nothing is requested from the page. A missing
+robots.txt (404) allows everything.
+
+To go past a stop, call again with the stopped host in
+`robotsAcknowledgedHosts` (sent as `robots_acknowledged_hosts`):
+
+```typescript
+import { RobotsDisallowedError } from 'kloakd-sdk';
+
+const url = 'https://www.reddit.com/r/Python/';
+try {
+  await client.evadr.fetch(url);
+} catch (err) {
+  if (!(err instanceof RobotsDisallowedError)) throw err;
+  console.log(err.reason, err.host, err.rule); // 'disallowed' 'www.reddit.com' 'Disallow: /'
+  // Only if you have the right to access this content despite its robots.txt:
+  await client.evadr.fetch(url, { robotsAcknowledgedHosts: [err.host] });
+}
+```
+
+By naming a host you confirm you have the right to access its content despite
+its robots.txt and accept responsibility for doing so under the Terms. KLOAKD
+records each acknowledgement it uses (who, the organisation, the host, the
+reason shown and the terms version, `err.termsVersion`). It applies to that
+request and those exact hosts only: nothing is remembered, so the next call
+is stopped again unless it names the host too. Give bare host names as the
+error's `host` gives them (`www.example.com`, with a port only when it is not
+the scheme's own), at most 50; the API answers 422 otherwise. The SDK never
+acknowledges for you and does not retry a stop. `err.unreadable` is true when
+the file could not be read rather than disallowing the page;
+`err.redirectedFrom` is set when the page you asked for redirected to the
+stopped one.
+
+These calls take `robotsAcknowledgedHosts`:
+
+| Call | Route |
+|---|---|
+| `evadr.fetch`, `fetchAsync`, `fetchStream`, `scan`, `profile` | `evadr/fetch`, `evadr/fetch/async`, `evadr/scan`, `evadr/profile` |
+| `kolektr.page`, `pageAll` | `kolektr/extract` |
+| `kolektr.extractAllApiData` | `kolektr/api-data/{endpoint}/extract-all` (in the query string) |
+| `webgrph.startCrawl`, `crawl`, `crawlAll`, `crawlStream`, `continueCrawl` | `webgrph/crawl`, `webgrph/crawl/{id}/continue` |
+| `webgrph.estimateCrawl`, `estimateCrawlExtract`, `mapSite`, `readerView` | `webgrph/crawl/estimate`, `webgrph/crawl-extract/estimate`, `webgrph/map`, `webgrph/reader-view` |
+| `webgrph.startCrawlExtract`, `crawlExtract`, `continueCrawlExtract` | `webgrph/crawl-extract`, `webgrph/crawl-extract/{job_id}/continue` |
+| `skanyr.sync` | `skanyr/sync` |
+| `parlyr.chat`, `chatStream` | `parlyr/chat` |
+| client `unifiedScrape`, `createBatchJob`, `crawl`, `crawlStream` | `scraping/unified`, `batch-jobs` (the client crawl sends it with the crawl and each page's fetch and extraction) |
+
+Where the stop is found after the call was accepted, it is not thrown as
+`RobotsDisallowedError`:
+
+- `parlyr.chat`: the turn ends with an `error` event whose `data` is the stop;
+  read it with `RobotsDisallowedError.fromDetail(event.data)`.
+- A crawl's start page that redirects to a stopped page: the crawl fails
+  (`webgrph.crawl` / `waitForCrawl` throw `JobFailedError`) and its status
+  has `error_code` `ROBOTS_DISALLOWED`. Pages a crawl leaves out for robots.txt are
+  counted in the `robots` field of `webgrph.getCrawlStatus`.
+- A batch item: the item fails with `ROBOTS_DISALLOWED` in its error.
+- A fetch or extraction handed off as a job (202) and stopped there:
+  `JobFailedError`.
+- The client `crawl`: a page stopped by robots.txt is a failed page.
+
+Two 503 answers are not stops and cannot be acknowledged:
+
+- `RobotsCheckUnavailableError` (503 `ROBOTS_CHECK_UNAVAILABLE`): KLOAKD could
+  not read the robots.txt because of a failure of its own; nothing was
+  fetched. Retried after `retryAfter` seconds.
+- `RobotsExitsRefusedError` (the same 503 with `reason` `exits_refused`; it
+  extends `RobotsCheckUnavailableError`): every one of KLOAKD's network exits
+  refused to connect to the site, so its robots.txt could not be read and
+  nothing was fetched. Not retried.
+
 ## Modules
 
 | Namespace | Methods |
@@ -530,7 +606,10 @@ Every error extends `KloakdError` (`statusCode`, `message`, `code`: the API's er
 | `CostAcknowledgementRequiredError` | 409 `cost_acknowledgement_required`: the estimate needs consent; start again with `estimateId` and `costAcknowledged: true`. Dashboard sessions only; API keys are not refused. |
 | `RateLimitError` | 429 `rate_limited` (`retryAfter`, `resetAt`). `quotaExhausted` is true for the playground quota (`quotaUsed`, `quotaLimit`, `upgradeUrl`). |
 | `QuotaExceededError` | 429 `gb_exhausted`: the plan's GB are used up (`tier`, `upgradeUrl`). |
+| `RobotsDisallowedError` | 409 `ROBOTS_DISALLOWED`: the site's robots.txt stopped the call (`reason`, `host`, `rule`, `url`, `redirectedFrom`, `termsVersion`). Call again with `robotsAcknowledgedHosts: [err.host]` to go past it; see robots.txt above. Not retried. |
 | `BillingUnavailableError` | 503 `billing_unavailable`: usage could not be checked; nothing was started. |
+| `RobotsCheckUnavailableError` | 503 `ROBOTS_CHECK_UNAVAILABLE`: KLOAKD could not read the site's robots.txt (`host`, `reason`, `retryAfter`); nothing was fetched and there is nothing to acknowledge. |
+| `RobotsExitsRefusedError` | 503 `ROBOTS_CHECK_UNAVAILABLE` with `reason` `exits_refused`: every exit refused to connect to the site. Extends `RobotsCheckUnavailableError`. Not retried. |
 | `UpstreamError` | 502. |
 | `ApiError` | Any other error status. A 422 carries the API's validation messages. `code` holds the API's error code, for example 409 `invalid_batch_transition` and 503 `dispatch_failed` on the batch calls. |
 | `JobFailedError` | A handed-off job failed or expired (`jobId`). |
@@ -540,7 +619,9 @@ Every error extends `KloakdError` (`statusCode`, `message`, `code`: the API's er
 
 - 429 `rate_limited`: retried on any method after `Retry-After` (or the body's
   `retry_after`, or until `reset_at`); the playground quota is not retried.
-- 503 `billing_unavailable`: retried on any method after `Retry-After`.
+- 503 `billing_unavailable` and `ROBOTS_CHECK_UNAVAILABLE`: retried on any
+  method after `Retry-After` (nothing was started). Not `exits_refused`.
+- 409 `ROBOTS_DISALLOWED` is never retried, and never acknowledged for you.
 - Other 5xx and network errors: retried for GET, HEAD and DELETE only, with
   exponential backoff (1 s, 2 s, 4 s, … at most 60 s). POST, PUT and PATCH
   are not retried, since the API may already have done the work.

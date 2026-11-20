@@ -1,6 +1,7 @@
 import type { HttpTransport } from '../_http.js';
 import type { ChatEvent, ChatTurn, ParseResult } from '../models.js';
-import { seg } from '../_params.js';
+import { seg, withRobotsAck } from '../_params.js';
+import type { RobotsAcknowledgementOption } from '../_params.js';
 
 export class ParlyrNamespace {
   constructor(private readonly _t: HttpTransport) {}
@@ -27,10 +28,15 @@ export class ParlyrNamespace {
    * Send one chat turn and collect its SSE events into a ChatTurn. Resolves
    * when the API sends `end`. `error` events do not throw: they are in
    * `turn.errors` and make `turn.ok` false.
+   *
+   * A turn whose page robots.txt stops ends with an `error` event whose
+   * `data` is the stop (`data.code` `ROBOTS_DISALLOWED`, `data.host`; read it
+   * with `RobotsDisallowedError.fromDetail`). Send the turn again with the
+   * host in `robotsAcknowledgedHosts` to go past it.
    */
-  async chat(sessionId: string, message: string): Promise<ChatTurn> {
+  async chat(sessionId: string, message: string, opts: RobotsAcknowledgementOption = {}): Promise<ChatTurn> {
     const events: ChatEvent[] = [];
-    for await (const event of this.chatStream(sessionId, message)) events.push(event);
+    for await (const event of this.chatStream(sessionId, message, opts)) events.push(event);
 
     const text: string[] = [];
     let interpretation: Record<string, unknown> | null = null;
@@ -71,11 +77,9 @@ export class ParlyrNamespace {
    * }
    * ```
    */
-  async *chatStream(sessionId: string, message: string): AsyncIterable<ChatEvent> {
-    for await (const { event, data } of this._t.streamWithEvents('parlyr/chat', {
-      session_id: sessionId,
-      message,
-    })) {
+  async *chatStream(sessionId: string, message: string, opts: RobotsAcknowledgementOption = {}): AsyncIterable<ChatEvent> {
+    const body = withRobotsAck({ session_id: sessionId, message }, opts.robotsAcknowledgedHosts);
+    for await (const { event, data } of this._t.streamWithEvents('parlyr/chat', body)) {
       if (event === 'end') return;
       yield {
         type: typeof data['type'] === 'string' ? (data['type'] as string) : event,

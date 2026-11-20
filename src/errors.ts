@@ -159,6 +159,120 @@ export class CostAcknowledgementRequiredError extends KloakdError {
   }
 }
 
+/** The request field that acknowledges a robots.txt stop. */
+export const ROBOTS_ACKNOWLEDGE_FIELD = 'robots_acknowledged_hosts';
+
+/**
+ * 409 `ROBOTS_DISALLOWED`: the site's robots.txt stopped the request, and
+ * nothing was asked of the page. `reason` is `disallowed` (a rule forbids the
+ * page; `rule` names it) or `unreadable` (the file could not be read: a 5xx,
+ * a timeout or a dropped connection).
+ *
+ * To go past it, call again with the stopped host acknowledged:
+ * `{ robotsAcknowledgedHosts: [err.host] }`. By naming the host you confirm
+ * you have the right to access its content despite its robots.txt and accept
+ * responsibility for doing so under the Terms; KLOAKD records each
+ * acknowledgement (with `termsVersion`). It counts for that request only.
+ * The SDK never acknowledges for you and does not retry this error.
+ */
+export class RobotsDisallowedError extends KloakdError {
+  /** `disallowed` or `unreadable`. */
+  readonly reason: string;
+  /** The host to name in `robotsAcknowledgedHosts` (lower case, with its port when not the scheme's own). */
+  readonly host: string;
+  /** The robots.txt rule that stopped the page (for example `Disallow: /`); '' when there is none. */
+  readonly rule: string;
+  /** The page that was stopped. */
+  readonly url: string;
+  /** The page asked for, when the stop is where it redirected to; null otherwise. */
+  readonly redirectedFrom: string | null;
+  /** The terms version an acknowledgement is recorded against. */
+  readonly termsVersion: string;
+  /** The request field that acknowledges the stop (`robots_acknowledged_hosts`). */
+  readonly acknowledgeField: string;
+
+  constructor(
+    message: string,
+    opts: {
+      reason?: string | undefined;
+      host?: string | undefined;
+      rule?: string | undefined;
+      url?: string | undefined;
+      redirectedFrom?: string | null | undefined;
+      termsVersion?: string | undefined;
+      acknowledgeField?: string | undefined;
+    } = {},
+  ) {
+    super(message, 409, 'ROBOTS_DISALLOWED');
+    this.name = 'RobotsDisallowedError';
+    this.reason = opts.reason ?? '';
+    this.host = opts.host ?? '';
+    this.rule = opts.rule ?? '';
+    this.url = opts.url ?? '';
+    this.redirectedFrom = opts.redirectedFrom ?? null;
+    this.termsVersion = opts.termsVersion ?? '';
+    this.acknowledgeField = opts.acknowledgeField ?? ROBOTS_ACKNOWLEDGE_FIELD;
+  }
+
+  /** The robots.txt file could not be read (rather than disallowing the page). */
+  get unreadable(): boolean {
+    return this.reason === 'unreadable';
+  }
+
+  /**
+   * The stop in an API detail object (the 409's `detail`, or the `data` of a
+   * Parlyr chat `error` event); null when it is not a robots.txt stop.
+   */
+  static fromDetail(detail: Record<string, unknown> | null | undefined): RobotsDisallowedError | null {
+    if (!detail || (detail['code'] ?? detail['error']) !== 'ROBOTS_DISALLOWED') return null;
+    const str = (key: string): string | undefined => (typeof detail[key] === 'string' ? (detail[key] as string) : undefined);
+    return new RobotsDisallowedError(str('message') ?? 'Stopped by robots.txt', {
+      reason: str('reason'),
+      host: str('host'),
+      rule: str('rule'),
+      url: str('url'),
+      redirectedFrom: str('redirected_from') ?? null,
+      termsVersion: str('terms_version'),
+      acknowledgeField: str('acknowledge_field'),
+    });
+  }
+}
+
+/**
+ * 503 `ROBOTS_CHECK_UNAVAILABLE`: KLOAKD could not read the site's robots.txt
+ * because of a failure of its own, so nothing was fetched. There is nothing
+ * to acknowledge. Retried by the SDK after `retryAfter` seconds (like
+ * `BillingUnavailableError`); `RobotsExitsRefusedError` is not.
+ */
+export class RobotsCheckUnavailableError extends KloakdError {
+  /** Why, when the API says (`exits_refused`); '' for KLOAKD's own capacity. */
+  readonly reason: string;
+  readonly host: string;
+  readonly retryAfter: number;
+
+  constructor(message: string, opts: { reason?: string; host?: string; retryAfter?: number } = {}) {
+    super(message, 503, 'ROBOTS_CHECK_UNAVAILABLE');
+    this.name = 'RobotsCheckUnavailableError';
+    this.reason = opts.reason ?? '';
+    this.host = opts.host ?? '';
+    this.retryAfter = opts.retryAfter ?? 30;
+  }
+}
+
+/**
+ * 503 `ROBOTS_CHECK_UNAVAILABLE` with reason `exits_refused`: every one of
+ * KLOAKD's exits refused to open a connection to the site, so its robots.txt
+ * was not read and nothing was fetched. Not the site's answer and nothing to
+ * acknowledge (`robotsAcknowledgedHosts` does not help). Not retried by the
+ * SDK: the refusal is the exit providers' and does not pass in seconds.
+ */
+export class RobotsExitsRefusedError extends RobotsCheckUnavailableError {
+  constructor(message: string, opts: { host?: string; retryAfter?: number } = {}) {
+    super(message, { ...opts, reason: 'exits_refused' });
+    this.name = 'RobotsExitsRefusedError';
+  }
+}
+
 /** 402: a paid plan whose last payment failed (`payment_required`). */
 export class PaymentRequiredError extends KloakdError {
   readonly upgradeUrl: string;
@@ -320,6 +434,10 @@ export function raiseForStatus(
   if (statusCode === 409 && code === 'cost_acknowledgement_required') {
     throw new CostAcknowledgementRequiredError(detail);
   }
+  if (statusCode === 409 && code === 'ROBOTS_DISALLOWED') {
+    // core/compliance/robots.py stop_detail.
+    throw RobotsDisallowedError.fromDetail(detailObj) ?? new RobotsDisallowedError(detail);
+  }
   if (statusCode === 429) {
     if (code === 'gb_exhausted') {
       throw new QuotaExceededError(detail, str('tier') ?? '', str('upgrade_url') ?? 'https://app.kloakd.dev/settings/billing');
@@ -337,6 +455,12 @@ export function raiseForStatus(
   }
   if (statusCode === 503 && code === 'billing_unavailable') {
     throw new BillingUnavailableError(detail, retryHeader ?? 30);
+  }
+  if (statusCode === 503 && code === 'ROBOTS_CHECK_UNAVAILABLE') {
+    // core/compliance/robots.py unavailable().
+    const opts = { host: str('host') ?? '', retryAfter: retryHeader ?? num(detailObj['retry_after_s']) ?? 30 };
+    if (str('reason') === 'exits_refused') throw new RobotsExitsRefusedError(detail, opts);
+    throw new RobotsCheckUnavailableError(detail, { ...opts, reason: str('reason') ?? '' });
   }
   throw new ApiError(`KLOAKD API error ${statusCode}: ${detail}`, statusCode, code);
 }

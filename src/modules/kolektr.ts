@@ -2,7 +2,8 @@ import type { HttpTransport } from '../_http.js';
 import { postFollowingHandoff } from '../_handoff.js';
 import type { HandoffOptions } from '../_handoff.js';
 import type { ExtractionResult } from '../models.js';
-import { query, seg } from '../_params.js';
+import { query, seg, withRobotsAck } from '../_params.js';
+import type { RobotsAcknowledgementOption } from '../_params.js';
 
 function parseExtraction(raw: Record<string, unknown>, url: string): ExtractionResult {
   const result = {
@@ -118,7 +119,7 @@ export function toSchemaSpec(schema: ExtractSchema, itemSelector?: string): Reco
 }
 
 /** Extraction options; the poll options apply when the API hands the extraction off as a job (202). */
-export interface PageOptions extends HandoffOptions {
+export interface PageOptions extends HandoffOptions, RobotsAcknowledgementOption {
   schema?: ExtractSchema;
   level?: string;
   fetchArtifactId?: string;
@@ -175,6 +176,9 @@ export class KolektrNamespace {
    *
    * Page extras (images, video and audio, fonts, stylesheets, tracking) are
    * off by default; ask for them with `includeResources`.
+   *
+   * A page the site's robots.txt stops throws `RobotsDisallowedError`; call
+   * again with its host in `robotsAcknowledgedHosts` to go past it.
    */
   async page(url: string, opts: PageOptions = {}): Promise<ExtractionResult> {
     const body: Record<string, unknown> = { url };
@@ -185,6 +189,7 @@ export class KolektrNamespace {
     if (opts.apiMapArtifactId) body['api_map_artifact_id'] = opts.apiMapArtifactId;
     if (opts.options) body['options'] = opts.options;
     if (opts.includeResources !== undefined) body['include_resources'] = opts.includeResources;
+    withRobotsAck(body, opts.robotsAcknowledgedHosts);
     return parseExtraction(await postFollowingHandoff(this._t, 'kolektr/extract', body, opts), url);
   }
 
@@ -223,13 +228,24 @@ export class KolektrNamespace {
     );
   }
 
-  /** Start a job extracting every record of an API endpoint. */
+  /**
+   * Start a job extracting every record of an API endpoint.
+   * `robotsAcknowledgedHosts` is sent in the query string, once per host.
+   */
   async extractAllApiData(
     apiEndpoint: string,
-    opts: { endpointHash?: string; maxRecords?: number } = {},
+    opts: { endpointHash?: string; maxRecords?: number } & RobotsAcknowledgementOption = {},
   ): Promise<Record<string, unknown>> {
-    const params = query({ endpoint_hash: opts?.endpointHash, max_records: opts?.maxRecords });
-    return this._t.request('POST', `kolektr/api-data/${seg(apiEndpoint)}/extract-all`, {}, params);
+    const params: Record<string, string | string[]> =
+      query({ endpoint_hash: opts?.endpointHash, max_records: opts?.maxRecords }) ?? {};
+    const hosts = opts?.robotsAcknowledgedHosts;
+    if (hosts !== undefined && hosts.length > 0) params['robots_acknowledged_hosts'] = [...hosts];
+    return this._t.request(
+      'POST',
+      `kolektr/api-data/${seg(apiEndpoint)}/extract-all`,
+      {},
+      Object.keys(params).length > 0 ? params : undefined,
+    );
   }
 
   /** Content items: `{items, total, page, page_size}`. */

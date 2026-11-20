@@ -1,5 +1,6 @@
 import type { HttpTransport } from '../_http.js';
-import { seg } from '../_params.js';
+import { seg, withRobotsAck } from '../_params.js';
+import type { RobotsAcknowledgementOption } from '../_params.js';
 import { followJob, postFollowingHandoff } from '../_handoff.js';
 import type { HandoffOptions } from '../_handoff.js';
 import type { AnalyzeResult, FetchEvent, FetchResult } from '../models.js';
@@ -22,7 +23,7 @@ function parseFetch(raw: Record<string, unknown>, url: string): FetchResult {
   return { ...result, get ok() { return result.success && result.error === null; } };
 }
 
-export interface FetchOptions extends HandoffOptions {
+export interface FetchOptions extends HandoffOptions, RobotsAcknowledgementOption {
   forceBrowser?: boolean;
   useProxy?: boolean;
   sessionArtifactId?: string;
@@ -35,7 +36,7 @@ export interface FetchOptions extends HandoffOptions {
   includeResources?: string[];
 }
 
-export interface FetchAsyncOptions {
+export interface FetchAsyncOptions extends RobotsAcknowledgementOption {
   forceBrowser?: boolean;
   useProxy?: boolean;
   sessionArtifactId?: string;
@@ -59,6 +60,9 @@ export class EvadrNamespace {
    *
    * Page extras (images, video and audio, fonts, stylesheets, tracking) are
    * off by default; ask for them with `includeResources`.
+   *
+   * A page the site's robots.txt stops throws `RobotsDisallowedError`; call
+   * again with its host in `robotsAcknowledgedHosts` to go past it.
    */
   async fetch(url: string, opts: FetchOptions = {}): Promise<FetchResult> {
     const body: Record<string, unknown> = { url };
@@ -66,6 +70,7 @@ export class EvadrNamespace {
     if (opts.useProxy) body['use_proxy'] = true;
     if (opts.sessionArtifactId) body['session_artifact_id'] = opts.sessionArtifactId;
     if (opts.includeResources !== undefined) body['include_resources'] = opts.includeResources;
+    withRobotsAck(body, opts.robotsAcknowledgedHosts);
     return parseFetch(await postFollowingHandoff(this._t, 'evadr/fetch', body, opts), url);
   }
 
@@ -81,6 +86,7 @@ export class EvadrNamespace {
     if (opts.sessionArtifactId) body['session_artifact_id'] = opts.sessionArtifactId;
     if (opts.webhookUrl) body['webhook_url'] = opts.webhookUrl;
     if (opts.includeResources !== undefined) body['include_resources'] = opts.includeResources;
+    withRobotsAck(body, opts.robotsAcknowledgedHosts);
     const raw = await this._t.post('evadr/fetch/async', body);
     return String(raw['job_id']);
   }
@@ -134,13 +140,13 @@ export class EvadrNamespace {
   }
 
   /** Lightweight HTTP fetch and anti-bot analysis of a URL. */
-  async scan(url: string): Promise<Record<string, unknown>> {
-    return this._t.post('evadr/scan', { url });
+  async scan(url: string, opts: RobotsAcknowledgementOption = {}): Promise<Record<string, unknown>> {
+    return this._t.post('evadr/scan', withRobotsAck({ url }, opts.robotsAcknowledgedHosts));
   }
 
   /** The canonical site profile of a URL. */
-  async profile(url: string): Promise<Record<string, unknown>> {
-    return this._t.post('evadr/profile', { url });
+  async profile(url: string, opts: RobotsAcknowledgementOption = {}): Promise<Record<string, unknown>> {
+    return this._t.post('evadr/profile', withRobotsAck({ url }, opts.robotsAcknowledgedHosts));
   }
 
   async getJob(jobId: string): Promise<Record<string, unknown>> {

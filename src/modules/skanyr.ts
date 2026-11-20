@@ -1,5 +1,6 @@
 import type { HttpTransport } from '../_http.js';
-import { query, seg } from '../_params.js';
+import { query, seg, withRobotsAck } from '../_params.js';
+import type { RobotsAcknowledgementOption } from '../_params.js';
 
 type Json = Record<string, unknown>;
 
@@ -38,10 +39,14 @@ export class SkanyrNamespace {
   }
 
   /** Re-fetch a site's changed content (all of it, or the given URLs). */
-  async sync(siteId: string, opts: { urls?: string[]; policy?: string } = {}): Promise<Json> {
+  async sync(
+    siteId: string,
+    opts: { urls?: string[]; policy?: string } & RobotsAcknowledgementOption = {},
+  ): Promise<Json> {
     const body: Json = { site_id: siteId };
     if (opts.urls) body['urls'] = opts.urls;
     if (opts.policy) body['policy'] = opts.policy;
+    withRobotsAck(body, opts.robotsAcknowledgedHosts);
     return this._t.post('skanyr/sync', body);
   }
 
