@@ -5,6 +5,8 @@
  * Nullable fields use `T | null` (not undefined) for JSON compatibility.
  */
 
+import type { RobotsAcknowledgementOption } from './_params.js';
+
 // ── Common ────────────────────────────────────────────────────────────────────
 
 /** Pagination envelope included in all list-returning responses. */
@@ -176,7 +178,7 @@ export interface CrawlContinueResult {
  * value is clamped to the plan and may only be raised: a lower value is a
  * 422 (`continue_cannot_lower`). Unset values keep the job's own.
  */
-export interface CrawlContinueOptions {
+export interface CrawlContinueOptions extends RobotsAcknowledgementOption {
   maxPages?: number;
   maxDepth?: number;
   /**

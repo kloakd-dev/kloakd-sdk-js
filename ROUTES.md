@@ -9,6 +9,25 @@ method and fails on any request that is not a live route.
 
 All paths are under `/api/v1/organizations/{organization_id}/`.
 
+## Unreleased: robots.txt acknowledgement
+
+From kobe-scraper `core/compliance/robots.py` (`RobotsAcknowledgementField`,
+`stop_detail`, `unavailable`; deployed 19 Nov 2026). The paths are unchanged.
+
+| Method | Path | Unreleased |
+|---|---|---|
+| POST | evadr/fetch, evadr/fetch/async, evadr/scan, evadr/profile | also send `robots_acknowledged_hosts?` (`fetch`, `fetchAsync`, `fetchStream`, `scan`, `profile`) |
+| POST | kolektr/extract | also send `robots_acknowledged_hosts?` (`page`, `pageAll`) |
+| POST | kolektr/api-data/{api_endpoint}/extract-all | query `robots_acknowledged_hosts`, repeated per host (`extractAllApiData`) |
+| POST | webgrph/crawl, webgrph/crawl/estimate, webgrph/crawl/{id}/continue, webgrph/map, webgrph/reader-view | also send `robots_acknowledged_hosts?`; a continue with only hosts sends a body |
+| POST | webgrph/crawl-extract, webgrph/crawl-extract/estimate, webgrph/crawl-extract/{job_id}/continue | also send `robots_acknowledged_hosts?` |
+| POST | skanyr/sync, parlyr/chat, scraping/unified, batch-jobs | also send `robots_acknowledged_hosts?` |
+| any of the above | | 409 `ROBOTS_DISALLOWED` `{reason, host, url, rule, message, acknowledge_field, terms_version, redirected_from?}` → `RobotsDisallowedError`; 503 `ROBOTS_CHECK_UNAVAILABLE` `{host, message, retry_after_s, reason?}` → `RobotsCheckUnavailableError`, or `RobotsExitsRefusedError` for `reason: exits_refused` |
+
+Not called by this SDK although they take the field: `analysis/complexity`,
+`analysis/site-profile`, `analysis/page-structure`, `analysis/element-preview`,
+`analysis/validate-selectors` and `batch/url-import`.
+
 ## Unreleased: crawl estimate and continue with options
 
 From the crawl-estimate API contract of 14 Nov 2026 (backend branch

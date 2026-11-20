@@ -15,12 +15,22 @@
  *     409 `concurrent_limit` (every work slot is in use).
  */
 
-import { BillingUnavailableError, KloakdError, RateLimitError, raiseForStatus } from './errors.js';
+import {
+  BillingUnavailableError,
+  KloakdError,
+  RateLimitError,
+  RobotsCheckUnavailableError,
+  RobotsExitsRefusedError,
+  raiseForStatus,
+} from './errors.js';
 
 export const SDK_VERSION = '0.7.0';
 export const USER_AGENT = `kloakd-sdk-js/${SDK_VERSION}`;
 const IDEMPOTENT = new Set(['GET', 'HEAD', 'DELETE']);
 const MAX_WAIT_MS = 60_000;
+
+/** Query parameters; a list value is sent once per item. */
+export type QueryParams = Record<string, string | string[]>;
 
 function sdkHeader(): string {
   return `typescript/${SDK_VERSION}`;
@@ -44,6 +54,12 @@ function retryDelayMs(err: unknown, method: string, attempt: number): number | n
     return backoffMs(attempt);
   }
   if (err instanceof BillingUnavailableError) {
+    return Math.min(Math.max(err.retryAfter, 0) * 1000, MAX_WAIT_MS);
+  }
+  // Every exit refused the site: asking again in seconds will not change it.
+  if (err instanceof RobotsExitsRefusedError) return null;
+  // KLOAKD could not read robots.txt and fetched nothing: safe to ask again, as for billing.
+  if (err instanceof RobotsCheckUnavailableError) {
     return Math.min(Math.max(err.retryAfter, 0) * 1000, MAX_WAIT_MS);
   }
   if (!IDEMPOTENT.has(method)) return null;
@@ -136,7 +152,7 @@ export class HttpTransport {
     method: string,
     path: string,
     body?: Record<string, unknown>,
-    params?: Record<string, string>,
+    params?: QueryParams,
   ): Promise<T> {
     return (await this.requestWithStatus<T>(method, path, body, params)).body;
   }
@@ -146,7 +162,7 @@ export class HttpTransport {
     method: string,
     path: string,
     body?: Record<string, unknown>,
-    params?: Record<string, string>,
+    params?: QueryParams,
   ): Promise<{ status: number; body: T }> {
     return this.send<T>(method, this.url(path), body, params);
   }
@@ -160,7 +176,7 @@ export class HttpTransport {
     method: string,
     url: string,
     body?: Record<string, unknown>,
-    params?: Record<string, string>,
+    params?: QueryParams,
   ): Promise<{ status: number; body: T }> {
     const resp = await this.fetchWithRetry(method, url, body, params);
     const { json } = await readBody(resp);
@@ -196,12 +212,17 @@ export class HttpTransport {
     method: string,
     url: string,
     body?: Record<string, unknown>,
-    params?: Record<string, string>,
+    params?: QueryParams,
     timed = true,
   ): Promise<Response> {
     let fullUrl = url;
     if (params && Object.keys(params).length > 0) {
-      fullUrl += '?' + new URLSearchParams(params).toString();
+      // A list value is sent once per item (`?k=a&k=b`).
+      const search = new URLSearchParams();
+      for (const [key, value] of Object.entries(params)) {
+        for (const item of Array.isArray(value) ? value : [value]) search.append(key, item);
+      }
+      fullUrl += '?' + search.toString();
     }
     const upper = method.toUpperCase();
 
@@ -280,7 +301,12 @@ export class HttpTransport {
   ): AsyncIterable<{ event: string; data: Record<string, unknown> }> {
     let fullUrl = this.url(path);
     if (params && Object.keys(params).length > 0) {
-      fullUrl += '?' + new URLSearchParams(params).toString();
+      // A list value is sent once per item (`?k=a&k=b`).
+      const search = new URLSearchParams();
+      for (const [key, value] of Object.entries(params)) {
+        for (const item of Array.isArray(value) ? value : [value]) search.append(key, item);
+      }
+      fullUrl += '?' + search.toString();
     }
     const init: RequestInit = { method, headers: { ...this.authHeaders(), Accept: 'text/event-stream' } };
     if (body !== undefined) init.body = JSON.stringify(body);

@@ -1,5 +1,6 @@
 import type { HttpTransport } from '../_http.js';
-import { query, seg } from '../_params.js';
+import { query, seg, withRobotsAck } from '../_params.js';
+import type { RobotsAcknowledgementOption } from '../_params.js';
 import { JobFailedError, JobTimeoutError } from '../errors.js';
 import type {
   CrawlContinueOptions,
@@ -86,7 +87,7 @@ const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve,
  * 15 Nov 2026). Each is sent only when set; a job without them runs as
  * before (no per-job data limit, no extras).
  */
-export interface CrawlCostOptions {
+export interface CrawlCostOptions extends RobotsAcknowledgementOption {
   /**
    * Page extras to load (`include_resources`): any of `images`, `media`,
    * `fonts`, `stylesheets`, `tracking`. Unset or empty: none is loaded
@@ -118,6 +119,7 @@ function costBody(body: Record<string, unknown>, opts: CrawlCostOptions): void {
   if (opts.costAcknowledged) body['cost_acknowledged'] = true;
   if (opts.urls !== undefined) body['urls'] = opts.urls;
   if (opts.includePaths !== undefined) body['include_paths'] = opts.includePaths;
+  withRobotsAck(body, opts.robotsAcknowledgedHosts);
 }
 
 export interface CrawlOptions extends CrawlCostOptions {
@@ -171,7 +173,7 @@ export interface CrawlExtractOptions extends CrawlCostOptions {
 }
 
 /** Options for `estimateCrawl`: the values the crawl would be started with. */
-export interface CrawlEstimateOptions {
+export interface CrawlEstimateOptions extends RobotsAcknowledgementOption {
   /** Unset: the tier's maximum; a given value is clamped to it. */
   maxDepth?: number;
   /** Unset: the tier's maximum; a given value is clamped to it. */
@@ -183,7 +185,7 @@ export interface CrawlEstimateOptions {
 }
 
 /** Options for `mapSite`. */
-export interface MapSiteOptions {
+export interface MapSiteOptions extends RobotsAcknowledgementOption {
   /** The most URLs to list (`max_urls`); unset: the API's default. */
   maxUrls?: number;
 }
@@ -354,12 +356,13 @@ function extractBody(spec: CrawlExtractSpec): Record<string, unknown> {
   return extract;
 }
 
-/** The continue body: only the values given; undefined when none is, so no body is sent. */
+/** The continue body: only the values given (the acknowledged hosts included); undefined when none is, so no body is sent. */
 function continueBody(opts: CrawlContinueOptions): Record<string, unknown> | undefined {
   const body: Record<string, unknown> = {};
   if (opts.maxPages !== undefined) body['max_pages'] = opts.maxPages;
   if (opts.maxDepth !== undefined) body['max_depth'] = opts.maxDepth;
   if (opts.maxDataMb !== undefined) body['max_data_mb'] = opts.maxDataMb;
+  withRobotsAck(body, opts.robotsAcknowledgedHosts);
   return Object.keys(body).length > 0 ? body : undefined;
 }
 
@@ -489,6 +492,7 @@ export class WebgrphNamespace {
     if (opts.maxPages !== undefined) body['max_pages'] = opts.maxPages;
     if (opts.includeResources !== undefined) body['include_resources'] = opts.includeResources;
     if (opts.captureMode !== undefined) body['capture_mode'] = opts.captureMode;
+    withRobotsAck(body, opts.robotsAcknowledgedHosts);
     return parseCrawlEstimate(await this._t.post('webgrph/crawl/estimate', body), url);
   }
 
@@ -504,6 +508,7 @@ export class WebgrphNamespace {
   async mapSite(url: string, opts: MapSiteOptions = {}): Promise<SiteMap> {
     const body: Record<string, unknown> = { url };
     if (opts.maxUrls !== undefined) body['max_urls'] = opts.maxUrls;
+    withRobotsAck(body, opts.robotsAcknowledgedHosts);
     return parseSiteMap(await this._t.post('webgrph/map', body), url);
   }
 
@@ -711,6 +716,7 @@ export class WebgrphNamespace {
     if (opts.includeResources !== undefined) body['include_resources'] = opts.includeResources;
     if (opts.captureMode !== undefined) body['capture_mode'] = opts.captureMode;
     if (opts.extract) body['extract'] = extractBody(opts.extract);
+    withRobotsAck(body, opts.robotsAcknowledgedHosts);
     return parseCrawlEstimate(await this._t.post('webgrph/crawl-extract/estimate', body), url);
   }
 
@@ -877,10 +883,14 @@ export class WebgrphNamespace {
 
   // ── Reader view, detected APIs, sessions ─────────────────────────────
 
-  async readerView(url: string, opts: { crawlId?: string; sessionArtifactId?: string } = {}): Promise<Record<string, unknown>> {
+  async readerView(
+    url: string,
+    opts: { crawlId?: string; sessionArtifactId?: string } & RobotsAcknowledgementOption = {},
+  ): Promise<Record<string, unknown>> {
     const body: Record<string, unknown> = { url };
     if (opts.crawlId) body['crawl_id'] = opts.crawlId;
     if (opts.sessionArtifactId) body['session_artifact_id'] = opts.sessionArtifactId;
+    withRobotsAck(body, opts.robotsAcknowledgedHosts);
     return this._t.post('webgrph/reader-view', body);
   }
 

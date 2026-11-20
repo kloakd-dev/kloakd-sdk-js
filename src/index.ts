@@ -24,8 +24,13 @@ export {
   PaymentRequiredError,
   QuotaExceededError,
   RateLimitError,
+  RobotsCheckUnavailableError,
+  RobotsDisallowedError,
+  RobotsExitsRefusedError,
+  ROBOTS_ACKNOWLEDGE_FIELD,
   UpstreamError,
 } from './errors.js';
+export type { RobotsAcknowledgementOption } from './_params.js';
 
 export { SDK_VERSION, USER_AGENT } from './_http.js';
 export { toSchemaSpec } from './modules/kolektr.js';

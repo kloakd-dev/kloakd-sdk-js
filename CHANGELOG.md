@@ -5,6 +5,35 @@ Only 0.1.0 and 0.4.0 were published to npm before 0.5.0; 0.2.0 and 0.3.0 were ne
 
 ## [Unreleased]
 
+### Added: robots.txt acknowledgement
+
+For the robots.txt contract of kobe-scraper `core/compliance/robots.py`
+(deployed 19 Nov 2026; GAP-DOC-35).
+
+- `robotsAcknowledgedHosts` (`RobotsAcknowledgementOption`, sent as
+  `robots_acknowledged_hosts` only when non-empty) on every call whose route
+  takes it: `evadr.fetch`, `fetchAsync`, `fetchStream`, `scan`, `profile`;
+  `kolektr.page`, `pageAll`, `extractAllApiData` (in the query string, once
+  per host); `webgrph.startCrawl`, `crawl`, `crawlAll`, `crawlStream`,
+  `estimateCrawl`, `continueCrawl`, `mapSite`, `readerView`,
+  `startCrawlExtract`, `crawlExtract`, `estimateCrawlExtract`,
+  `continueCrawlExtract`; `skanyr.sync`; `parlyr.chat`, `chatStream`; client
+  `unifiedScrape`, `createBatchJob`, `crawl`, `crawlStream`. `scan`,
+  `profile`, `chat` and `chatStream` take a new optional last argument.
+- `RobotsDisallowedError` for 409 `ROBOTS_DISALLOWED` (`reason`, `host`,
+  `rule`, `url`, `redirectedFrom`, `termsVersion`, `acknowledgeField`,
+  `unreadable`, `fromDetail`). Not retried.
+- `RobotsCheckUnavailableError` for 503 `ROBOTS_CHECK_UNAVAILABLE`, retried
+  after `Retry-After` like `billing_unavailable`, and
+  `RobotsExitsRefusedError` for its reason `exits_refused`, not retried.
+- `ROBOTS_ACKNOWLEDGE_FIELD` (`'robots_acknowledged_hosts'`).
+
+### Changed
+- `continueCrawl` / `continueCrawlExtract` send a body when the hosts are
+  the only option given; with no option they still send none.
+- Before this, a 409 `ROBOTS_DISALLOWED` was an `ApiError` and a 503
+  `ROBOTS_CHECK_UNAVAILABLE` an `ApiError` that was not retried on POST.
+
 For the crawl-estimate API (kobe-scraper feature/2026-11-14-crawl-estimate,
 not yet merged).
 
